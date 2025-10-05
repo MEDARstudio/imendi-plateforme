@@ -294,7 +294,7 @@ body {
     flex-direction: column;
     padding: 6rem 2rem 2rem;
     transform: translateX(-100%);
-    transition: transform 0.4s cubic-bezier(0.23, 1, 0.32, 1);
+    transition: transform 0.5s cubic-bezier(0.645, 0.045, 0.355, 1);
     box-shadow: 5px 0 15px rgba(0,0,0,0.2);
 }
 
@@ -326,6 +326,11 @@ body {
 .mobile-menu.open .nav-link:nth-child(5) { transition-delay: 0.3s; }
 .mobile-menu.open #logout-mobile-btn { transition-delay: 0.35s; }
 
+.mobile-menu .nav-link.active {
+    background: rgba(255, 255, 255, 0.2);
+    font-weight: 600;
+}
+
 
 /* Menu Overlay */
 .menu-overlay {
@@ -337,7 +342,7 @@ body {
     background: rgba(0, 0, 0, 0.5);
     z-index: 100;
     opacity: 0;
-    transition: opacity 0.4s ease-in-out;
+    transition: opacity 0.5s cubic-bezier(0.645, 0.045, 0.355, 1);
     pointer-events: none;
 }
 
@@ -352,6 +357,7 @@ body {
     margin: 2rem auto;
     padding: 0 1rem;
     position: relative;
+    overflow: hidden;
 }
 
 .page {
@@ -551,27 +557,50 @@ h2 {
 }
 
 /* Animations */
-@keyframes fadeIn {
-    from { opacity: 0; transform: translateY(10px); }
-    to { opacity: 1; transform: translateY(0); }
+@keyframes slideInFromRight {
+    from { transform: translateX(100%); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+}
+@keyframes slideOutToLeft {
+    from { transform: translateX(0); opacity: 1; }
+    to { transform: translateX(-100%); opacity: 0; }
+}
+@keyframes slideInFromLeft {
+    from { transform: translateX(-100%); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+}
+@keyframes slideOutToRight {
+    from { transform: translateX(0); opacity: 1; }
+    to { transform: translateX(100%); opacity: 0; }
 }
 
-@keyframes fadeOut {
-    from { opacity: 1; transform: translateY(0); }
-    to { opacity: 0; transform: translateY(-10px); }
-}
-
-.page-fade-in {
-    animation: fadeIn 0.3s ease-out forwards;
-}
-
-.page-fade-out {
-    animation: fadeOut 0.3s ease-out forwards;
+.page-transition {
     position: absolute;
     top: 0;
     left: 0;
-    width: 100%;
+    right: 0;
+    animation-duration: 0.4s;
+    animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+    animation-fill-mode: forwards;
 }
+
+.page-slide-in-from-right {
+    animation-name: slideInFromRight;
+    z-index: 2;
+}
+.page-slide-out-to-left {
+    animation-name: slideOutToLeft;
+    z-index: 1;
+}
+.page-slide-in-from-left {
+    animation-name: slideInFromLeft;
+    z-index: 2;
+}
+.page-slide-out-to-right {
+    animation-name: slideOutToRight;
+    z-index: 1;
+}
+
 
 /* Responsive Design */
 @media (max-width: 768px) {
