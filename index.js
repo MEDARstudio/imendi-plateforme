@@ -6,6 +6,7 @@ class IMENDITransApp {
     constructor() {
         this.currentUser = null;
         this.currentView = 'dashboard';
+        this.pageOrder = ['dashboard', 'new-bon', 'history', 'stats', 'settings'];
         this.offlineMode = !navigator.onLine;
         this.db = null;
         this.lastGeneratedNumber = 0; // Tracks the last number used in this session
@@ -291,6 +292,33 @@ class IMENDITransApp {
     }
 
     navigateTo(view) {
+        if (this.currentView === view) return;
+    
+        const oldView = this.currentView;
+        const oldIndex = this.pageOrder.indexOf(oldView);
+        const newIndex = this.pageOrder.indexOf(view);
+    
+        const currentPage = document.getElementById(`${oldView}-page`);
+        const nextPage = document.getElementById(`${view}-page`);
+    
+        if (!currentPage || !nextPage) return;
+    
+        const mainContent = document.querySelector('.main-content');
+        mainContent.style.overflow = 'hidden';
+    
+        let oldPageAnimation, newPageAnimation;
+        if (newIndex > oldIndex) {
+            oldPageAnimation = 'page-slide-out-to-left';
+            newPageAnimation = 'page-slide-in-from-right';
+        } else {
+            oldPageAnimation = 'page-slide-out-to-right';
+            newPageAnimation = 'page-slide-in-from-left';
+        }
+    
+        currentPage.classList.add('page-transition', oldPageAnimation);
+        nextPage.classList.remove('hidden');
+        nextPage.classList.add('page-transition', newPageAnimation);
+    
         // Update navigation active state
         document.querySelectorAll('.nav-link').forEach(link => {
             link.classList.remove('active');
@@ -299,47 +327,26 @@ class IMENDITransApp {
             }
         });
     
-        const currentPage = document.querySelector('.main-content .page:not(.hidden)');
-        const nextPage = document.getElementById(`${view}-page`);
-    
-        if (currentPage && currentPage !== nextPage) {
-            currentPage.classList.add('page-fade-out');
-            setTimeout(() => {
-                currentPage.classList.add('hidden');
-                currentPage.classList.remove('page-fade-out');
-            }, 300); // Animation duration
-        }
-    
-        if (nextPage) {
-            nextPage.classList.remove('hidden');
-            nextPage.classList.add('page-fade-in');
-            setTimeout(() => {
-                nextPage.classList.remove('page-fade-in');
-            }, 300); // Animation duration
-        }
-    
         this.currentView = view;
+        localStorage.setItem('currentView', view);
     
-        // Load specific content
+        // Load content for the new view
         switch (view) {
-            case 'dashboard':
-                this.loadDashboard();
-                break;
-            case 'new-bon':
-                this.loadNewBon();
-                break;
-            case 'history':
-                this.loadHistory();
-                break;
-            case 'stats':
-                this.loadStatistics();
-                break;
-            case 'settings':
-                this.loadSettings();
-                break;
+            case 'dashboard': this.loadDashboard(); break;
+            case 'new-bon': this.loadNewBon(); break;
+            case 'history': this.loadHistory(); break;
+            case 'stats': this.loadStatistics(); break;
+            case 'settings': this.loadSettings(); break;
         }
     
-        // Close mobile menu
+        // Clean up animation classes
+        setTimeout(() => {
+            currentPage.classList.add('hidden');
+            currentPage.classList.remove('page-transition', oldPageAnimation);
+            nextPage.classList.remove('page-transition', newPageAnimation);
+            mainContent.style.overflow = '';
+        }, 400); // Must match animation duration
+    
         this.closeMobileMenu();
     }
     
@@ -374,6 +381,7 @@ class IMENDITransApp {
     async handleLogout() {
         localStorage.removeItem('access_token');
         localStorage.removeItem('refresh_token');
+        localStorage.removeItem('currentView');
         this.currentUser = null;
         this.showPage('auth-page');
     }
@@ -906,122 +914,112 @@ class IMENDITransApp {
                     'Authorization': `Bearer ${token}`
                 }
             });
-
-            if (response.ok) {
-                const bon = await response.json();
-                const { jsPDF } = window.jspdf;
-                
-                const doc = new jsPDF({
-                    orientation: 'portrait',
-                    unit: 'mm',
-                    format: 'a4'
+    
+            if (!response.ok) throw new Error('Failed to fetch bon data.');
+    
+            const bonData = await response.json();
+            const bon = bonData[0];
+            if (!bon) throw new Error('Bon not found.');
+    
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    
+            // Fetch and add logo
+            try {
+                const imgResponse = await fetch('images/image300v2.png');
+                const blob = await imgResponse.blob();
+                const reader = new FileReader();
+                const dataUrl = await new Promise((resolve, reject) => {
+                    reader.onload = () => resolve(reader.result);
+                    reader.onerror = reject;
+                    reader.readAsDataURL(blob);
                 });
-                
-                doc.setFont('helvetica', 'normal');
-                doc.setFontSize(10);
-                doc.setTextColor(0, 0, 0);
-                
+                // Adjust width and height as needed, maintaining aspect ratio. 
+                // Assuming original is 300x100, let's use 45x15mm.
+                doc.addImage(dataUrl, 'PNG', 20, 15, 45, 15);
+            } catch (e) {
+                console.error("Could not add logo to PDF:", e);
+                // Fallback to text if logo fails
                 doc.setFont('helvetica', 'bold');
                 doc.setFontSize(16);
                 doc.text('IMENDI TRANS', 20, 20);
-                
-                doc.setFontSize(12);
-                doc.text(`BON-${new Date().getFullYear()}-${bon[0].id.split('-')[2] || '0001'}`, 150, 20);
-                doc.setFontSize(10);
-                doc.text(`Date: ${new Date(bon[0].created_at).toLocaleDateString('fr-FR')}`, 150, 25);
-                
-                doc.setDrawColor(30, 58, 138);
-                doc.line(20, 30, 190, 30);
-                
-                doc.setFont('helvetica', 'bold');
-                doc.setFontSize(10);
-                doc.setTextColor(30, 58, 138);
-                doc.text('Expéditeur', 25, 40);
-                doc.setFont('helvetica', 'normal');
-                doc.setFontSize(9);
-                doc.setTextColor(0, 0, 0);
-                doc.text(`Nom: ${bon[0].sender_first_name} ${bon[0].sender_last_name}`, 25, 45);
-                doc.text(`Téléphone: ${bon[0].sender_phone}`, 25, 50);
-                doc.text(`CIN: ${bon[0].sender_cin}`, 25, 55);
-                
-                doc.setFont('helvetica', 'bold');
-                doc.setFontSize(10);
-                doc.setTextColor(30, 58, 138);
-                doc.text('Destinataire', 110, 40);
-                doc.setFont('helvetica', 'normal');
-                doc.setFontSize(9);
-                doc.setTextColor(0, 0, 0);
-                doc.text(`Nom: ${bon[0].recipient_first_name} ${bon[0].recipient_last_name}`, 110, 45);
-                doc.text(`Téléphone: ${bon[0].recipient_phone}`, 110, 50);
-                doc.text(`CIN: ${bon[0].recipient_cin}`, 110, 55);
-                
-                doc.setFont('helvetica', 'bold');
-                doc.setFontSize(10);
-                doc.setTextColor(0, 0, 0);
-                doc.text('Trajet:', 25, 65);
-                doc.setFont('helvetica', 'normal');
-                doc.setFontSize(9);
-                
-                const origin = this.sanitizeForPDF(bon[0].origin);
-                const destination = this.sanitizeForPDF(bon[0].destination);
-                const trajetText = `${origin} - ${destination}`;
-                
-                doc.text(trajetText, 45, 65);
-                
-                doc.setFont('helvetica', 'bold');
-                doc.setFontSize(10);
-                doc.setTextColor(30, 58, 138);
-                doc.text('Détails des Bagages', 25, 75);
-                
-                doc.setFont('helvetica', 'bold');
-                doc.setFontSize(9);
-                doc.setTextColor(0, 0, 0);
-                doc.rect(25, 80, 80, 10);
-                doc.rect(105, 80, 80, 10);
-                doc.text('Article', 28, 86);
-                doc.text('Quantité', 108, 86);
-                
-                let yPos = 90;
-                doc.setFont('helvetica', 'normal');
-                doc.setFontSize(9);
-                doc.setTextColor(0, 0, 0);
-                
-                if (bon[0].luggage.length === 0) {
-                    doc.rect(25, yPos, 80, 10);
-                    doc.rect(105, yPos, 80, 10);
-                    doc.text('Aucun article détaillé.', 28, yPos + 6);
-                } else {
-                    bon[0].luggage.forEach(item => {
-                        doc.rect(25, yPos, 80, 10);
-                        doc.rect(105, yPos, 80, 10);
-                        
-                        const type = this.sanitizeForPDF(item.type);
-                        const quantity = item.quantity ? item.quantity.toString() : '';
-                        
-                        doc.text(type, 28, yPos + 6);
-                        doc.text(quantity, 108, yPos + 6);
-                        yPos += 10;
-                    });
-                }
-                
-                doc.setFont('helvetica', 'bold');
-                doc.setFontSize(10);
-                doc.text('Statut:', 25, yPos + 10);
-                
-                const statutText = bon[0].paid ? 'Payé' : 'Non Payé';
-                if (bon[0].paid) {
-                    doc.setTextColor(0, 153, 51);
-                } else {
-                    doc.setTextColor(255, 0, 0);
-                }
-                doc.text(statutText, 45, yPos + 10);
-                
-                doc.setTextColor(0, 0, 0);
-                doc.setFontSize(10);
-                doc.text(`Total: ${bon[0].total.toFixed(2)} €`, 150, yPos + 10);
-                
-                doc.save(`bon_${id}.pdf`);
             }
+    
+            doc.setFont('helvetica', 'normal');
+            doc.setFontSize(10);
+            doc.setTextColor(0, 0, 0);
+    
+            doc.setFontSize(12);
+            doc.text(bon.id, 150, 20);
+            doc.setFontSize(10);
+            doc.text(`Date: ${new Date(bon.created_at).toLocaleDateString('fr-FR')}`, 150, 25);
+    
+            doc.setDrawColor(30, 58, 138);
+            doc.line(20, 35, 190, 35); // Adjusted Y position
+    
+            // Sender & Recipient details
+            let yPos = 45;
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(10);
+            doc.setTextColor(30, 58, 138);
+            doc.text('Expéditeur', 25, yPos);
+            doc.text('Destinataire', 110, yPos);
+    
+            doc.setFont('helvetica', 'normal');
+            doc.setFontSize(9);
+            doc.setTextColor(0, 0, 0);
+            doc.text(`Nom: ${bon.sender_first_name} ${bon.sender_last_name}`, 25, yPos + 5);
+            doc.text(`Téléphone: ${bon.sender_phone}`, 25, yPos + 10);
+            doc.text(`CIN: ${bon.sender_cin}`, 25, yPos + 15);
+    
+            doc.text(`Nom: ${bon.recipient_first_name} ${bon.recipient_last_name}`, 110, yPos + 5);
+            doc.text(`Téléphone: ${bon.recipient_phone}`, 110, yPos + 10);
+            doc.text(`CIN: ${bon.recipient_cin}`, 110, yPos + 15);
+    
+            yPos += 25;
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(10);
+            doc.setTextColor(0, 0, 0);
+            doc.text('Trajet:', 25, yPos);
+            doc.setFont('helvetica', 'normal');
+            doc.setFontSize(9);
+            doc.text(`${this.sanitizeForPDF(bon.origin)} - ${this.sanitizeForPDF(bon.destination)}`, 45, yPos);
+    
+            yPos += 10;
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(10);
+            doc.setTextColor(30, 58, 138);
+            doc.text('Détails des Bagages', 25, yPos);
+    
+            yPos += 5;
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(9);
+            doc.setTextColor(0, 0, 0);
+            doc.rect(25, yPos, 80, 7);
+            doc.rect(105, yPos, 80, 7);
+            doc.text('Article', 28, yPos + 5);
+            doc.text('Quantité', 108, yPos + 5);
+    
+            yPos += 7;
+            doc.setFont('helvetica', 'normal');
+            bon.luggage.forEach(item => {
+                doc.rect(25, yPos, 80, 7);
+                doc.rect(105, yPos, 80, 7);
+                doc.text(this.sanitizeForPDF(item.type), 28, yPos + 5);
+                doc.text(String(item.quantity), 108, yPos + 5);
+                yPos += 7;
+            });
+    
+            yPos += 10;
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(10);
+            doc.text('Statut:', 25, yPos);
+            doc.text(bon.paid ? 'Payé' : 'Non Payé', 45, yPos, { textColor: bon.paid ? [0, 153, 51] : [255, 0, 0] });
+    
+            doc.text(`Total: ${bon.total.toFixed(2)} €`, 150, yPos);
+    
+            doc.save(`bon_${id}.pdf`);
+    
         } catch (error) {
             console.error('Error exporting PDF:', error);
             this.showMessage('Erreur lors de la génération du PDF', 'error');
@@ -1284,18 +1282,12 @@ class IMENDITransApp {
 // Initialize the app when DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {
     window.app = new IMENDITransApp();
-});
 
-// Prevent page refresh from logging out user
-window.addEventListener('beforeunload', (e) => {
-    // Save current view
-    localStorage.setItem('currentView', document.querySelector('.page:not(.hidden)').id);
-});
-
-// On page load, restore the view
-window.addEventListener('load', () => {
+    // On page load, restore the view if available, otherwise default to dashboard
     const savedView = localStorage.getItem('currentView');
-    if (savedView && document.getElementById(savedView)) {
-        document.getElementById(savedView).classList.remove('hidden');
+    if (window.app.currentUser && savedView && document.getElementById(`${savedView}-page`)) {
+        window.app.navigateTo(savedView);
+    } else if (window.app.currentUser) {
+        window.app.navigateTo('dashboard');
     }
 });
