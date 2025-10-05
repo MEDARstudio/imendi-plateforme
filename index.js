@@ -9,7 +9,7 @@ class IMENDITransApp {
         this.offlineMode = !navigator.onLine;
         this.db = null;
         this.startNumber = parseInt(localStorage.getItem('startNumber') || '1000');
-        this.nextNumber = this.startNumber;
+        this.lastGeneratedNumber = 0; // Pour éviter les doublons
         
         this.init();
     }
@@ -102,12 +102,6 @@ class IMENDITransApp {
                 this.updateTotalColis();
             }
         });
-        
-        // Debug buttons
-        if (document.getElementById('debug-network-btn')) {
-            document.getElementById('debug-network-btn').addEventListener('click', () => this.debugNetwork());
-            document.getElementById('debug-db-btn').addEventListener('click', () => this.debugDatabase());
-        }
     }
 
     async registerServiceWorker() {
@@ -399,25 +393,18 @@ class IMENDITransApp {
         const formData = this.getFormData();
         
         try {
-            console.log('Tentative de soumission du bon:', formData);
-            
             if (this.offlineMode) {
-                console.log('Mode hors ligne détecté');
                 // Store in IndexedDB for later sync
                 await this.storeOffline(formData);
                 this.showMessage('Bon sauvegardé localement. Synchronisation automatique...', 'success');
                 this.navigateTo('history');
             } else {
-                console.log('Mode en ligne - envoi au serveur');
                 // Submit to Supabase
                 const result = await this.submitToSupabase(formData);
-                console.log('Résultat de l\'envoi:', result);
-                
-                if (result.success) {
+                if (result) {
                     this.showMessage('Bon enregistré avec succès !', 'success');
                     this.navigateTo('history');
                 } else {
-                    console.log('Échec de l\'envoi - sauvegarde locale');
                     // If Supabase fails, store offline
                     await this.storeOffline(formData);
                     this.showMessage('Erreur réseau. Sauvegardé localement...', 'warning');
@@ -425,17 +412,8 @@ class IMENDITransApp {
                 }
             }
         } catch (error) {
-            console.error('Erreur détaillée lors de la soumission:', error);
-            
-            // Même en cas d'erreur, on sauvegarde localement
-            try {
-                await this.storeOffline(formData);
-                this.showMessage('Erreur lors de l\'enregistrement. Sauvegardé localement.', 'warning');
-                this.navigateTo('history');
-            } catch (storageError) {
-                console.error('Erreur critique de sauvegarde locale:', storageError);
-                this.showMessage('Erreur critique lors de la sauvegarde: ' + storageError.message, 'error');
-            }
+            console.error('Error submitting bon:', error);
+            this.showMessage('Erreur lors de l\'enregistrement', 'error');
         }
     }
 
@@ -444,7 +422,7 @@ class IMENDITransApp {
         document.querySelectorAll('.luggage-item').forEach(item => {
             const type = item.querySelector('.luggage-type').value;
             const quantity = parseInt(item.querySelector('.luggage-quantity').value);
-            if (type && quantity && !isNaN(quantity)) {
+            if (type && quantity) {
                 luggage.push({ type, quantity });
             }
         });
@@ -462,10 +440,9 @@ class IMENDITransApp {
             origin: document.getElementById('origin').value,
             destination: document.getElementById('destination').value,
             luggage: luggage,
-            total: parseFloat(document.getElementById('total').value) || 0,
+            total: parseFloat(document.getElementById('total').value),
             paid: document.getElementById('paid').checked,
-            user_id: this.currentUser.id,
-            created_at: new Date().toISOString()
+            user_id: this.currentUser.id
         };
     }
 
@@ -499,16 +476,28 @@ class IMENDITransApp {
                 }
             } else {
                 // If API call fails, use local counter
-                nextNum = this.nextNumber;
-                this.nextNumber++;
+                nextNum = this.lastGeneratedNumber + 1;
+                if (nextNum <= this.startNumber) {
+                    nextNum = this.startNumber;
+                }
             }
             
+            // S'assurer que le numéro est unique
+            if (nextNum <= this.lastGeneratedNumber) {
+                nextNum = this.lastGeneratedNumber + 1;
+            }
+            
+            this.lastGeneratedNumber = nextNum;
             const id = `${prefix}${nextNum.toString().padStart(4, '0')}`;
             return id;
         } catch (error) {
             // If network fails, use local counter
-            const id = `${prefix}${this.nextNumber.toString().padStart(4, '0')}`;
-            this.nextNumber++;
+            let nextNum = this.lastGeneratedNumber + 1;
+            if (nextNum <= this.startNumber) {
+                nextNum = this.startNumber;
+            }
+            this.lastGeneratedNumber = nextNum;
+            const id = `${prefix}${nextNum.toString().padStart(4, '0')}`;
             return id;
         }
     }
@@ -516,14 +505,6 @@ class IMENDITransApp {
     async submitToSupabase(data) {
         try {
             const token = localStorage.getItem('access_token');
-            console.log('Token d\'accès:', token ? 'Présent' : 'Absent');
-            
-            if (!token) {
-                throw new Error('Token d\'accès manquant - veuillez vous reconnecter');
-            }
-            
-            console.log('Données à envoyer:', data);
-            
             const response = await fetch(`${SUPABASE_URL}/rest/v1/bons`, {
                 method: 'POST',
                 headers: {
@@ -535,62 +516,27 @@ class IMENDITransApp {
                 body: JSON.stringify(data)
             });
 
-            console.log('Statut de la réponse:', response.status);
-            console.log('Headers de la réponse:', [...response.headers.entries()]);
-            
-            if (response.ok) {
-                const responseData = await response.json();
-                console.log('Réponse réussie:', responseData);
-                return { success: true,  responseData };
-            } else {
-                const errorText = await response.text();
-                console.error('Erreur HTTP:', response.status, errorText);
-                throw new Error(`HTTP ${response.status}: ${errorText}`);
-            }
+            return response.ok;
         } catch (error) {
-            console.error('Erreur Supabase:', error);
-            return { success: false, error: error.message };
+            console.error('Supabase error:', error);
+            return false;
         }
     }
 
     async storeOffline(data) {
-        try {
-            console.log('Tentative de sauvegarde locale');
-            
-            if (!this.db) {
-                console.log('Base de données non initialisée, tentative d\'initialisation...');
-                await this.initDatabase();
-                if (!this.db) {
-                    throw new Error('Impossible d\'initialiser la base de données');
-                }
-            }
-            
-            const transaction = this.db.transaction(['sync-queue'], 'readwrite');
-            const store = transaction.objectStore('sync-queue');
-            
-            const result = await store.add({
-                type: 'bon',
-                 data,
-                timestamp: Date.now()
-            });
-            
-            console.log('Données sauvegardées localement avec ID:', result);
-            
-            // Register sync
-            if ('serviceWorker' in navigator && 'sync' in navigator.serviceWorker) {
-                try {
-                    const registration = await navigator.serviceWorker.ready;
-                    await registration.sync.register('sync-bons');
-                    console.log('Sync registered');
-                } catch (syncError) {
-                    console.warn('Sync registration failed:', syncError);
-                }
-            }
-            
-            return result;
-        } catch (error) {
-            console.error('Erreur de sauvegarde locale:', error);
-            throw new Error('Impossible de sauvegarder localement: ' + error.message);
+        const transaction = this.db.transaction(['sync-queue'], 'readwrite');
+        const store = transaction.objectStore('sync-queue');
+        
+        await store.add({
+            type: 'bon',
+            data,
+            timestamp: Date.now()
+        });
+
+        // Register sync
+        if ('serviceWorker' in navigator && 'sync' in navigator.serviceWorker) {
+            const registration = await navigator.serviceWorker.ready;
+            await registration.sync.register('sync-bons');
         }
     }
 
@@ -1282,42 +1228,6 @@ class IMENDITransApp {
         setTimeout(() => {
             messageEl.remove();
         }, 3000);
-    }
-
-    // Fonctions de débogage
-    async debugNetwork() {
-        const output = document.getElementById('debug-output');
-        output.textContent = 'Test de connexion en cours...\n';
-        
-        try {
-            const startTime = Date.now();
-            const response = await fetch('https://httpbin.org/get');
-            const endTime = Date.now();
-            
-            output.textContent += `Connexion HTTP réussie: ${response.ok}\n`;
-            output.textContent += `Temps de réponse: ${endTime - startTime}ms\n`;
-            output.textContent += `Statut: ${response.status}\n`;
-        } catch (error) {
-            output.textContent += `Erreur de connexion: ${error.message}\n`;
-        }
-    }
-
-    async debugDatabase() {
-        const output = document.getElementById('debug-output');
-        output.textContent = 'Test de la base de données...\n';
-        
-        try {
-            if (this.db) {
-                const transaction = this.db.transaction(['sync-queue'], 'readonly');
-                const store = transaction.objectStore('sync-queue');
-                const count = await store.count();
-                output.textContent += `Base de données prête: ${count} éléments en attente\n`;
-            } else {
-                output.textContent += 'Base de données non initialisée\n';
-            }
-        } catch (error) {
-            output.textContent += `Erreur de base de données: ${error.message}\n`;
-        }
     }
 }
 
