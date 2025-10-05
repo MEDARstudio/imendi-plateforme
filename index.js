@@ -8,8 +8,7 @@ class IMENDITransApp {
         this.currentView = 'dashboard';
         this.offlineMode = !navigator.onLine;
         this.db = null;
-        this.startNumber = parseInt(localStorage.getItem('startNumber') || '1000');
-        this.lastGeneratedNumber = 0; // Pour éviter les doublons
+        this.lastGeneratedNumber = 0; // Tracks the last number used in this session
         
         this.init();
     }
@@ -59,6 +58,7 @@ class IMENDITransApp {
         // Mobile menu
         document.getElementById('mobile-menu-btn').addEventListener('click', () => this.toggleMobileMenu());
         document.getElementById('logout-mobile-btn').addEventListener('click', () => this.handleLogout());
+        document.getElementById('menu-overlay').addEventListener('click', () => this.closeMobileMenu());
 
         // Logout
         document.getElementById('logout-btn').addEventListener('click', () => this.handleLogout());
@@ -75,7 +75,6 @@ class IMENDITransApp {
         document.getElementById('apply-filters').addEventListener('click', () => this.loadStatistics());
 
         // Settings events
-        document.getElementById('save-settings').addEventListener('click', () => this.saveSettings());
         document.getElementById('save-username').addEventListener('click', () => this.saveUsername());
 
         // Form submission
@@ -107,7 +106,7 @@ class IMENDITransApp {
     async registerServiceWorker() {
         if ('serviceWorker' in navigator) {
             try {
-                await navigator.serviceWorker.register('sw.js');
+                await navigator.serviceWorker.register('/sw.js');
                 console.log('Service Worker registered');
             } catch (error) {
                 console.error('Service Worker registration failed:', error);
@@ -152,6 +151,7 @@ class IMENDITransApp {
                 localStorage.setItem('access_token', data.access_token);
                 localStorage.setItem('refresh_token', data.refresh_token);
                 this.currentUser = data.user;
+                await this.initializeLastGeneratedNumber();
                 this.showPage('main-app');
                 this.navigateTo('dashboard');
                 await this.loadDashboard();
@@ -269,6 +269,7 @@ class IMENDITransApp {
 
                 if (response.ok) {
                     this.currentUser = await response.json();
+                    await this.initializeLastGeneratedNumber();
                     this.showPage('main-app');
                     await this.loadDashboard();
                 } else {
@@ -297,22 +298,28 @@ class IMENDITransApp {
                 link.classList.add('active');
             }
         });
-
-        // Hide all pages
-        document.querySelectorAll('.page').forEach(page => {
-            if (page.id !== 'auth-page' && page.id !== 'main-app') {
-                page.classList.add('hidden');
-            }
-        });
-
-        // Show target page
-        const targetPage = document.getElementById(`${view}-page`);
-        if (targetPage) {
-            targetPage.classList.remove('hidden');
+    
+        const currentPage = document.querySelector('.main-content .page:not(.hidden)');
+        const nextPage = document.getElementById(`${view}-page`);
+    
+        if (currentPage && currentPage !== nextPage) {
+            currentPage.classList.add('page-fade-out');
+            setTimeout(() => {
+                currentPage.classList.add('hidden');
+                currentPage.classList.remove('page-fade-out');
+            }, 300); // Animation duration
         }
-
+    
+        if (nextPage) {
+            nextPage.classList.remove('hidden');
+            nextPage.classList.add('page-fade-in');
+            setTimeout(() => {
+                nextPage.classList.remove('page-fade-in');
+            }, 300); // Animation duration
+        }
+    
         this.currentView = view;
-
+    
         // Load specific content
         switch (view) {
             case 'dashboard':
@@ -331,18 +338,37 @@ class IMENDITransApp {
                 this.loadSettings();
                 break;
         }
-
+    
         // Close mobile menu
         this.closeMobileMenu();
     }
-
+    
     toggleMobileMenu() {
+        const menuBtn = document.getElementById('mobile-menu-btn');
         const menu = document.getElementById('mobile-menu');
-        menu.classList.toggle('hidden');
+        const overlay = document.getElementById('menu-overlay');
+        const isOpen = menu.classList.contains('open');
+    
+        menuBtn.classList.toggle('open', !isOpen);
+        menu.classList.toggle('open', !isOpen);
+        overlay.classList.toggle('open', !isOpen);
+        menuBtn.setAttribute('aria-expanded', String(!isOpen));
+        
+        document.body.style.overflow = !isOpen ? 'hidden' : '';
     }
-
+    
     closeMobileMenu() {
-        document.getElementById('mobile-menu').classList.add('hidden');
+        const menuBtn = document.getElementById('mobile-menu-btn');
+        const menu = document.getElementById('mobile-menu');
+        const overlay = document.getElementById('menu-overlay');
+        
+        if (menu.classList.contains('open')) {
+            menuBtn.classList.remove('open');
+            menu.classList.remove('open');
+            overlay.classList.remove('open');
+            menuBtn.setAttribute('aria-expanded', 'false');
+            document.body.style.overflow = '';
+        }
     }
 
     async handleLogout() {
@@ -391,31 +417,83 @@ class IMENDITransApp {
         event.preventDefault();
         
         const formData = this.getFormData();
+        const displayedId = formData.id;
+        let finalId = displayedId;
         
-        try {
-            if (this.offlineMode) {
-                // Store in IndexedDB for later sync
-                await this.storeOffline(formData);
-                this.showMessage('Bon sauvegardé localement. Synchronisation automatique...', 'success');
-                this.navigateTo('history');
-            } else {
-                // Submit to Supabase
-                const result = await this.submitToSupabase(formData);
-                if (result) {
-                    this.showMessage('Bon enregistré avec succès !', 'success');
-                    this.navigateTo('history');
+        // Online check: Re-fetch the absolute latest ID from the database to prevent race conditions
+        if (!this.offlineMode) {
+            const year = new Date().getFullYear();
+            let lastNumberFromDB = 0;
+            try {
+                const token = localStorage.getItem('access_token');
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/bons?id=like.BON-${year}-*&order=id.desc&limit=1`, {
+                    headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${token}` }
+                });
+                if (!response.ok) throw new Error('Failed to verify last bon number.');
+                
+                const result = await response.json();
+                if (result.length > 0) {
+                    lastNumberFromDB = parseInt(result[0].id.split('-')[2]);
+                }
+            } catch (error) {
+                console.error("Could not verify last bon number from DB.", error);
+                this.showMessage('Erreur réseau, impossible de vérifier le numéro du bon. Réessayez.', 'error');
+                return; // Stop submission
+            }
+
+            const displayedNumber = parseInt(displayedId.split('-')[2]);
+            const expectedNextNumber = lastNumberFromDB > 0 ? lastNumberFromDB + 1 : 1000;
+
+            if (displayedNumber < expectedNextNumber) {
+                const newId = `BON-${year}-${expectedNextNumber.toString().padStart(4, '0')}`;
+                const userConfirmed = confirm(
+                    `Le numéro du bon a changé car un autre a été créé. Le nouveau numéro est : ${newId}.\n\nVoulez-vous enregistrer avec ce nouveau numéro ?`
+                );
+                
+                if (userConfirmed) {
+                    finalId = newId;
                 } else {
-                    // If Supabase fails, store offline
-                    await this.storeOffline(formData);
-                    this.showMessage('Erreur réseau. Sauvegardé localement...', 'warning');
-                    this.navigateTo('history');
+                    await this.prepareNextBonId(); // Refresh UI with the correct next number
+                    return; // Cancel the save
                 }
             }
+        }
+        
+        formData.id = finalId;
+        const finalNumber = parseInt(finalId.split('-')[2]);
+
+        try {
+            let saved = false;
+            if (this.offlineMode) {
+                await this.storeOffline(formData);
+                saved = true;
+                this.showMessage('Bon sauvegardé localement. Synchronisation automatique...', 'success');
+            } else {
+                const result = await this.submitToSupabase(formData);
+                if (result) {
+                    saved = true;
+                    this.showMessage('Bon enregistré avec succès !', 'success');
+                } else {
+                    // Assume network failure, save offline
+                    await this.storeOffline(formData);
+                    saved = true;
+                    this.showMessage('Erreur réseau. Sauvegardé localement...', 'warning');
+                }
+            }
+            
+            if (saved) {
+                // Only now do we "consume" the number by updating our local counters
+                this.lastGeneratedNumber = Math.max(this.lastGeneratedNumber, finalNumber);
+                localStorage.setItem('lastGeneratedNumber', this.lastGeneratedNumber.toString());
+                this.navigateTo('history');
+            }
+
         } catch (error) {
             console.error('Error submitting bon:', error);
-            this.showMessage('Erreur lors de l\'enregistrement', 'error');
+            this.showMessage(`Erreur lors de l'enregistrement: ${error.message}`, 'error');
         }
     }
+
 
     getFormData() {
         const luggage = [];
@@ -446,60 +524,75 @@ class IMENDITransApp {
         };
     }
 
-    async generateId() {
+    async initializeLastGeneratedNumber() {
+        const year = new Date().getFullYear();
+        let lastKnownNumber = 0;
+
+        // 1. Get from localStorage (covers offline work across sessions)
+        const localLastNumber = parseInt(localStorage.getItem('lastGeneratedNumber') || '0');
+        lastKnownNumber = localLastNumber;
+
+        // 2. Try to get the most recent number from Supabase if online (across all users)
+        if (!this.offlineMode && this.currentUser) {
+            try {
+                const token = localStorage.getItem('access_token');
+                // Query for the absolute latest bon number in the current year
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/bons?id=like.BON-${year}-*&order=id.desc&limit=1`, {
+                    headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${token}` }
+                });
+
+                if (response.ok) {
+                    const result = await response.json();
+                    if (result.length > 0) {
+                        const lastId = result[0].id;
+                        const lastNumberFromDB = parseInt(lastId.split('-')[2]);
+                        // Use the highest number between local and DB
+                        lastKnownNumber = Math.max(lastKnownNumber, lastNumberFromDB);
+                    }
+                }
+            } catch (error) {
+                console.error("Could not fetch last bon number from DB, relying on local value.", error);
+            }
+        }
+        
+        this.lastGeneratedNumber = lastKnownNumber;
+        console.log(`Initialized lastGeneratedNumber to: ${this.lastGeneratedNumber}`);
+    }
+
+    async prepareNextBonId() {
         const year = new Date().getFullYear();
         const prefix = `BON-${year}-`;
+        const defaultStartNumber = 1000;
         
-        // Use the current start number from localStorage
-        this.startNumber = parseInt(localStorage.getItem('startNumber') || '1000');
-        
-        // Get the highest number from the database for this year
-        try {
-            const token = localStorage.getItem('access_token');
-            const response = await fetch(`${SUPABASE_URL}/rest/v1/bons?user_id=eq.${this.currentUser.id}&id=like.BON-${year}-%&order=id.desc&limit=1`, {
-                headers: {
-                    'apikey': SUPABASE_ANON_KEY,
-                    'Authorization': `Bearer ${token}`
-                }
-            });
+        let lastNumberFromDB = 0;
+        if (!this.offlineMode) {
+            try {
+                const token = localStorage.getItem('access_token');
+                // Query for the absolute latest bon number in the current year
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/bons?id=like.BON-${year}-*&order=id.desc&limit=1`, {
+                    headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${token}` }
+                });
 
-            let nextNum = this.startNumber;
-            if (response.ok) {
-                const result = await response.json();
-                if (result.length > 0) {
-                    const lastId = result[0].id;
-                    const lastNumber = parseInt(lastId.split('-')[2]);
-                    nextNum = lastNumber + 1;
-                } else {
-                    // No existing bons for this year, use start number
-                    nextNum = this.startNumber;
+                if (response.ok) {
+                    const result = await response.json();
+                    if (result.length > 0) {
+                        lastNumberFromDB = parseInt(result[0].id.split('-')[2]);
+                    }
                 }
-            } else {
-                // If API call fails, use local counter
-                nextNum = this.lastGeneratedNumber + 1;
-                if (nextNum <= this.startNumber) {
-                    nextNum = this.startNumber;
-                }
+            } catch (error) {
+                console.warn('Could not fetch last bon number from DB for display. Falling back to local.', error);
             }
-            
-            // S'assurer que le numéro est unique
-            if (nextNum <= this.lastGeneratedNumber) {
-                nextNum = this.lastGeneratedNumber + 1;
-            }
-            
-            this.lastGeneratedNumber = nextNum;
-            const id = `${prefix}${nextNum.toString().padStart(4, '0')}`;
-            return id;
-        } catch (error) {
-            // If network fails, use local counter
-            let nextNum = this.lastGeneratedNumber + 1;
-            if (nextNum <= this.startNumber) {
-                nextNum = this.startNumber;
-            }
-            this.lastGeneratedNumber = nextNum;
-            const id = `${prefix}${nextNum.toString().padStart(4, '0')}`;
-            return id;
         }
+        
+        const lastNumberFromLocal = parseInt(localStorage.getItem('lastGeneratedNumber') || '0');
+        const baseNumber = Math.max(lastNumberFromDB, lastNumberFromLocal, this.lastGeneratedNumber);
+        const nextNum = Math.max(baseNumber + 1, defaultStartNumber);
+        
+        const id = `${prefix}${nextNum.toString().padStart(4, '0')}`;
+        
+        // Display it, but do not consume it
+        document.getElementById('current-bon-id').textContent = id;
+        document.getElementById('bon-id').value = id;
     }
 
     async submitToSupabase(data) {
@@ -586,10 +679,6 @@ class IMENDITransApp {
         document.getElementById('bon-id').value = '';
         document.getElementById('paid').checked = false;
 
-        // Set the start number for ID generation (use the current value from localStorage)
-        this.startNumber = parseInt(localStorage.getItem('startNumber') || '1000');
-        document.getElementById('start-number').value = this.startNumber;
-
         // Clear luggage items except first one
         const container = document.getElementById('luggage-container');
         while (container.children.length > 1) {
@@ -631,13 +720,9 @@ class IMENDITransApp {
                 }
             }
         } else {
-            // Creating new bon - generate new ID only once
+            // Creating new bon - show the potential next ID without consuming it
             document.getElementById('bon-form-title').textContent = 'Nouveau Bon';
-            if (document.getElementById('current-bon-id').textContent === 'En cours de génération...') {
-                const newId = await this.generateId();
-                document.getElementById('current-bon-id').textContent = newId;
-                document.getElementById('bon-id').value = newId;
-            }
+            await this.prepareNextBonId();
         }
 
         // Update total colis
@@ -805,6 +890,13 @@ class IMENDITransApp {
         }
     }
 
+    sanitizeForPDF(text) {
+        if (!text) return '';
+        // Keeps letters (including common accented ones), numbers, spaces, and basic punctuation.
+        // Removes other symbols that might not be supported by the PDF font.
+        return text.toString().replace(/[^A-Za-z0-9_\s\-.,\u00C0-\u017F]/g, '');
+    }
+
     async exportPDF(id) {
         try {
             const token = localStorage.getItem('access_token');
@@ -819,92 +911,80 @@ class IMENDITransApp {
                 const bon = await response.json();
                 const { jsPDF } = window.jspdf;
                 
-                // Créer un nouveau document PDF (A4, portrait, en mm)
                 const doc = new jsPDF({
                     orientation: 'portrait',
                     unit: 'mm',
                     format: 'a4'
                 });
                 
-                // Définir la police et la couleur
                 doc.setFont('helvetica', 'normal');
                 doc.setFontSize(10);
-                doc.setTextColor(0, 0, 0); // Noir
+                doc.setTextColor(0, 0, 0);
                 
-                // En-tête
                 doc.setFont('helvetica', 'bold');
                 doc.setFontSize(16);
                 doc.text('IMENDI TRANS', 20, 20);
                 
-                // Numéro de bon et date (en haut à droite)
                 doc.setFontSize(12);
                 doc.text(`BON-${new Date().getFullYear()}-${bon[0].id.split('-')[2] || '0001'}`, 150, 20);
                 doc.setFontSize(10);
                 doc.text(`Date: ${new Date(bon[0].created_at).toLocaleDateString('fr-FR')}`, 150, 25);
                 
-                // Ligne horizontale sous l'en-tête
-                doc.setDrawColor(30, 58, 138); // Bleu foncé
+                doc.setDrawColor(30, 58, 138);
                 doc.line(20, 30, 190, 30);
                 
-                // Section Expéditeur
                 doc.setFont('helvetica', 'bold');
                 doc.setFontSize(10);
-                doc.setTextColor(30, 58, 138); // Bleu foncé
+                doc.setTextColor(30, 58, 138);
                 doc.text('Expéditeur', 25, 40);
                 doc.setFont('helvetica', 'normal');
                 doc.setFontSize(9);
-                doc.setTextColor(0, 0, 0); // Noir
+                doc.setTextColor(0, 0, 0);
                 doc.text(`Nom: ${bon[0].sender_first_name} ${bon[0].sender_last_name}`, 25, 45);
                 doc.text(`Téléphone: ${bon[0].sender_phone}`, 25, 50);
                 doc.text(`CIN: ${bon[0].sender_cin}`, 25, 55);
                 
-                // Section Destinataire
                 doc.setFont('helvetica', 'bold');
                 doc.setFontSize(10);
-                doc.setTextColor(30, 58, 138); // Bleu foncé
+                doc.setTextColor(30, 58, 138);
                 doc.text('Destinataire', 110, 40);
                 doc.setFont('helvetica', 'normal');
                 doc.setFontSize(9);
-                doc.setTextColor(0, 0, 0); // Noir
+                doc.setTextColor(0, 0, 0);
                 doc.text(`Nom: ${bon[0].recipient_first_name} ${bon[0].recipient_last_name}`, 110, 45);
                 doc.text(`Téléphone: ${bon[0].recipient_phone}`, 110, 50);
                 doc.text(`CIN: ${bon[0].recipient_cin}`, 110, 55);
                 
-                // Trajet - CORRECTION : Utilisation de text avec échappement
                 doc.setFont('helvetica', 'bold');
                 doc.setFontSize(10);
-                doc.setTextColor(0, 0, 0); // Noir
+                doc.setTextColor(0, 0, 0);
                 doc.text('Trajet:', 25, 65);
                 doc.setFont('helvetica', 'normal');
                 doc.setFontSize(9);
                 
-                // Nettoyage des données avant affichage
-                const origin = bon[0].origin ? bon[0].origin.replace(/[^\w\s\-.,]/g, '') : '';
-                const destination = bon[0].destination ? bon[0].destination.replace(/[^\w\s\-.,]/g, '') : '';
-                const trajetText = `${origin} → ${destination}`;
+                const origin = this.sanitizeForPDF(bon[0].origin);
+                const destination = this.sanitizeForPDF(bon[0].destination);
+                const trajetText = `${origin} - ${destination}`;
                 
                 doc.text(trajetText, 45, 65);
                 
-                // Détails des bagages
                 doc.setFont('helvetica', 'bold');
                 doc.setFontSize(10);
-                doc.setTextColor(30, 58, 138); // Bleu foncé
+                doc.setTextColor(30, 58, 138);
                 doc.text('Détails des Bagages', 25, 75);
                 
-                // Tableau des bagages
                 doc.setFont('helvetica', 'bold');
                 doc.setFontSize(9);
-                doc.setTextColor(0, 0, 0); // Noir
-                doc.rect(25, 80, 80, 10); // Cellule Article
-                doc.rect(105, 80, 80, 10); // Cellule Quantité
+                doc.setTextColor(0, 0, 0);
+                doc.rect(25, 80, 80, 10);
+                doc.rect(105, 80, 80, 10);
                 doc.text('Article', 28, 86);
                 doc.text('Quantité', 108, 86);
                 
-                // Données du tableau
                 let yPos = 90;
                 doc.setFont('helvetica', 'normal');
                 doc.setFontSize(9);
-                doc.setTextColor(0, 0, 0); // Noir
+                doc.setTextColor(0, 0, 0);
                 
                 if (bon[0].luggage.length === 0) {
                     doc.rect(25, yPos, 80, 10);
@@ -915,8 +995,7 @@ class IMENDITransApp {
                         doc.rect(25, yPos, 80, 10);
                         doc.rect(105, yPos, 80, 10);
                         
-                        // Nettoyage des données avant affichage
-                        const type = item.type ? item.type.replace(/[^\w\s\-.,]/g, '') : '';
+                        const type = this.sanitizeForPDF(item.type);
                         const quantity = item.quantity ? item.quantity.toString() : '';
                         
                         doc.text(type, 28, yPos + 6);
@@ -925,26 +1004,22 @@ class IMENDITransApp {
                     });
                 }
                 
-                // Statut et Total
                 doc.setFont('helvetica', 'bold');
                 doc.setFontSize(10);
                 doc.text('Statut:', 25, yPos + 10);
                 
-                // Statut (Payé ou Non Payé)
                 const statutText = bon[0].paid ? 'Payé' : 'Non Payé';
                 if (bon[0].paid) {
-                    doc.setTextColor(0, 153, 51); // Vert pour "Payé"
+                    doc.setTextColor(0, 153, 51);
                 } else {
-                    doc.setTextColor(255, 0, 0); // Rouge pour "Non Payé"
+                    doc.setTextColor(255, 0, 0);
                 }
                 doc.text(statutText, 45, yPos + 10);
                 
-                // Total
-                doc.setTextColor(0, 0, 0); // Retour au noir
+                doc.setTextColor(0, 0, 0);
                 doc.setFontSize(10);
                 doc.text(`Total: ${bon[0].total.toFixed(2)} €`, 150, yPos + 10);
                 
-                // Sauvegarder le PDF
                 doc.save(`bon_${id}.pdf`);
             }
         } catch (error) {
@@ -1001,7 +1076,6 @@ class IMENDITransApp {
     }
 
     loadSettings() {
-        document.getElementById('start-number-setting').value = this.startNumber;
         this.loadUsernameFromProfile();
     }
 
@@ -1046,30 +1120,6 @@ class IMENDITransApp {
             console.error('Error getting username:', error);
         }
         return null;
-    }
-
-    saveSettings() {
-        const startNumber = parseInt(document.getElementById('start-number-setting').value);
-        if (startNumber >= 1) {
-            this.startNumber = startNumber;
-            localStorage.setItem('startNumber', startNumber.toString());
-            
-            // Mettre à jour le numéro de bon dans la page "Nouveau Bon" si elle est active
-            if (this.currentView === 'new-bon') {
-                this.updateBonNumber();
-            }
-            
-            this.showMessage('Paramètres sauvegardés', 'success');
-        } else {
-            this.showMessage('Numéro de départ invalide', 'error');
-        }
-    }
-
-    async updateBonNumber() {
-        // Generate a new ID with the updated start number
-        const newId = await this.generateId();
-        document.getElementById('current-bon-id').textContent = newId;
-        document.getElementById('bon-id').value = newId;
     }
 
     async saveUsername() {
