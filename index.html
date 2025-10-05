@@ -10,14 +10,17 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#1E3A8A">
-    <link rel="apple-touch-icon" href="/icons/icon-192x192.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="images/image32v2.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="images/image180v2.png">
 </head>
 <body>
     <div id="app">
         <!-- Auth Page -->
         <div id="auth-page" class="page">
             <div class="auth-container">
-                <h1>IMENDI TRANS</h1>
+                <div class="auth-logo">
+                    <img src="images/image500x200v2.png" alt="IMENDI TRANS Logo">
+                </div>
                 <div class="auth-tabs">
                     <button id="login-tab" class="tab-btn active">Connexion</button>
                     <button id="register-tab" class="tab-btn">Inscription</button>
@@ -46,7 +49,9 @@
             <!-- Header -->
             <header class="header">
                 <div class="header-content">
-                    <div class="logo">IMENDI TRANS</div>
+                    <div class="logo">
+                        <img src="images/image300v1.png" alt="IMENDI TRANS Logo">
+                    </div>
                     <nav class="nav">
                         <a href="#dashboard" class="nav-link active">Dashboard</a>
                         <a href="#new-bon" class="nav-link">Nouveau Bon</a>
@@ -55,13 +60,17 @@
                         <a href="#settings" class="nav-link">Paramètres</a>
                         <button id="logout-btn" class="btn btn-secondary">Déconnexion</button>
                     </nav>
-                    <button id="mobile-menu-btn" class="mobile-menu-btn">☰</button>
+                    <button id="mobile-menu-btn" class="mobile-menu-btn" aria-label="Ouvrir le menu" aria-expanded="false">
+                        <span></span>
+                        <span></span>
+                        <span></span>
+                    </button>
                 </div>
                 <div id="offline-banner" class="offline-banner hidden">Hors ligne</div>
             </header>
 
             <!-- Mobile Menu -->
-            <div id="mobile-menu" class="mobile-menu hidden">
+            <div id="mobile-menu" class="mobile-menu">
                 <a href="#dashboard" class="nav-link">Dashboard</a>
                 <a href="#new-bon" class="nav-link">Nouveau Bon</a>
                 <a href="#history" class="nav-link">Historique</a>
@@ -69,6 +78,8 @@
                 <a href="#settings" class="nav-link">Paramètres</a>
                 <button id="logout-mobile-btn" class="btn btn-secondary">Déconnexion</button>
             </div>
+            <div id="menu-overlay" class="menu-overlay"></div>
+
 
             <!-- Pages -->
             <main class="main-content">
@@ -100,7 +111,6 @@
                     </div>
                     <form id="bon-form">
                         <input type="hidden" id="bon-id">
-                        <input type="hidden" id="start-number" value="1000">
                         <div class="form-section">
                             <h3>Informations de l'expéditeur</h3>
                             <div class="form-row">
@@ -215,13 +225,6 @@
                 <!-- Settings -->
                 <div id="settings-page" class="page hidden">
                     <h2>Paramètres</h2>
-                    <div class="form-section">
-                        <h3>Configuration des bons</h3>
-                        <label for="start-number-setting">Numéro de départ des bons pour une nouvelle année:</label>
-                        <input type="number" id="start-number-setting" min="1" value="1000">
-                        <button id="save-settings" class="btn btn-primary">Enregistrer</button>
-                    </div>
-                    
                     <div class="form-section">
                         <h3>Profil utilisateur</h3>
                         <label for="username-setting">Nom d'utilisateur:</label>
