@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IMENDI TRANS</title>
+    <link rel="stylesheet" href="index.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#1E3A8A">
+    <link rel="apple-touch-icon" href="/icons/icon-192x192.png">
+</head>
+<body>
+    <div id="app">
+        <!-- Auth Page -->
+        <div id="auth-page" class="page">
+            <div class="auth-container">
+                <h1>IMENDI TRANS</h1>
+                <div class="auth-tabs">
+                    <button id="login-tab" class="tab-btn active">Connexion</button>
+                    <button id="register-tab" class="tab-btn">Inscription</button>
+                </div>
+                
+                <div id="login-form" class="auth-form">
+                    <input type="email" id="login-email" placeholder="Email" required>
+                    <input type="password" id="login-password" placeholder="Mot de passe" required>
+                    <button id="login-submit" class="btn btn-primary">Se connecter</button>
+                    <div id="login-message" class="message hidden"></div>
+                </div>
+                
+                <div id="register-form" class="auth-form hidden">
+                    <input type="email" id="register-email" placeholder="Email" required>
+                    <input type="password" id="register-password" placeholder="Mot de passe" required>
+                    <input type="password" id="register-confirm-password" placeholder="Confirmer le mot de passe" required>
+                    <input type="text" id="register-username" placeholder="Nom d'utilisateur" required>
+                    <button id="register-submit" class="btn btn-primary">S'inscrire</button>
+                    <div id="register-message" class="message hidden"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main App -->
+        <div id="main-app" class="hidden">
+            <!-- Header -->
+            <header class="header">
+                <div class="header-content">
+                    <div class="logo">IMENDI TRANS</div>
+                    <nav class="nav">
+                        <a href="#dashboard" class="nav-link active">Dashboard</a>
+                        <a href="#new-bon" class="nav-link">Nouveau Bon</a>
+                        <a href="#history" class="nav-link">Historique</a>
+                        <a href="#stats" class="nav-link">Statistiques</a>
+                        <a href="#settings" class="nav-link">Paramètres</a>
+                        <button id="logout-btn" class="btn btn-secondary">Déconnexion</button>
+                    </nav>
+                    <button id="mobile-menu-btn" class="mobile-menu-btn">☰</button>
+                </div>
+                <div id="offline-banner" class="offline-banner hidden">Hors ligne</div>
+            </header>
+
+            <!-- Mobile Menu -->
+            <div id="mobile-menu" class="mobile-menu hidden">
+                <a href="#dashboard" class="nav-link">Dashboard</a>
+                <a href="#new-bon" class="nav-link">Nouveau Bon</a>
+                <a href="#history" class="nav-link">Historique</a>
+                <a href="#stats" class="nav-link">Statistiques</a>
+                <a href="#settings" class="nav-link">Paramètres</a>
+                <button id="logout-mobile-btn" class="btn btn-secondary">Déconnexion</button>
+            </div>
+
+            <!-- Pages -->
+            <main class="main-content">
+                <!-- Dashboard -->
+                <div id="dashboard-page" class="page">
+                    <h2>Dashboard</h2>
+                    <div class="welcome-message">
+                        <p>Bienvenue, <span id="user-name">Utilisateur</span> !</p>
+                    </div>
+                    
+                    <div class="dashboard-cards">
+                        <div class="card">
+                            <h3>Bons Récents</h3>
+                            <div id="recent-bons"></div>
+                        </div>
+                        
+                        <div class="card">
+                            <h3>Actions Rapides</h3>
+                            <button id="quick-create-bon" class="btn btn-primary btn-large">Créer un nouveau bon</button>
+                        </div>
+                    </div>
+                    
+                    <!-- Debug Section (temporaire) -->
+                    <div class="debug-section" style="margin-top: 20px; padding: 15px; background: #ffeeee; border: 1px solid #ffcccc; border-radius: 5px;">
+                        <h4 style="color: #cc0000;">Section de débogage</h4>
+                        <button id="debug-network-btn" class="btn btn-secondary" style="margin-right: 10px;">Tester la connexion</button>
+                        <button id="debug-db-btn" class="btn btn-secondary">Tester la base de données</button>
+                        <div id="debug-output" style="margin-top: 10px; font-family: monospace; font-size: 12px; white-space: pre-wrap;"></div>
+                    </div>
+                </div>
+
+                <!-- New Bon -->
+                <div id="new-bon-page" class="page hidden">
+                    <h2 id="bon-form-title">Nouveau Bon</h2>
+                    <div id="bon-header" class="bon-header">
+                        <h3>Numéro de bon: <span id="current-bon-id">En cours de génération...</span></h3>
+                    </div>
+                    <form id="bon-form">
+                        <input type="hidden" id="bon-id">
+                        <input type="hidden" id="start-number" value="1000">
+                        <div class="form-section">
+                            <h3>Informations de l'expéditeur</h3>
+                            <div class="form-row">
+                                <input type="text" id="sender-first-name" placeholder="Prénom" required>
+                                <input type="text" id="sender-last-name" placeholder="Nom" required>
+                            </div>
+                            <input type="text" id="sender-phone" placeholder="Téléphone" required>
+                            <input type="text" id="sender-cin" placeholder="CIN" required>
+                        </div>
+
+                        <div class="form-section">
+                            <h3>Informations du destinataire</h3>
+                            <div class="form-row">
+                                <input type="text" id="recipient-first-name" placeholder="Prénom" required>
+                                <input type="text" id="recipient-last-name" placeholder="Nom" required>
+                            </div>
+                            <input type="text" id="recipient-phone" placeholder="Téléphone" required>
+                            <input type="text" id="recipient-cin" placeholder="CIN" required>
+                        </div>
+
+                        <div class="form-section">
+                            <h3>Itinéraire</h3>
+                            <div class="form-row">
+                                <input type="text" id="origin" placeholder="Origine" required>
+                                <input type="text" id="destination" placeholder="Destination" required>
+                            </div>
+                        </div>
+
+                        <div class="form-section">
+                            <h3>Bagages</h3>
+                            <div id="luggage-container">
+                                <div class="luggage-item">
+                                    <input type="text" class="luggage-type" placeholder="Type d'article" required>
+                                    <input type="number" class="luggage-quantity" placeholder="Quantité" min="1" required>
+                                    <button type="button" class="remove-luggage btn btn-danger">Supprimer</button>
+                                </div>
+                            </div>
+                            <button type="button" id="add-luggage" class="btn btn-secondary">Ajouter un article</button>
+                        </div>
+
+                        <div class="form-section">
+                            <h3>Paiement</h3>
+                            <input type="number" id="total" placeholder="Montant total" step="0.01" required>
+                            <label>
+                                <input type="checkbox" id="paid"> Payé
+                            </label>
+                        </div>
+
+                        <div class="form-actions">
+                            <button type="submit" class="btn btn-primary">Enregistrer</button>
+                            <button type="button" id="cancel-bon" class="btn btn-secondary">Annuler</button>
+                        </div>
+                    </form>
+                    <div id="bon-footer" class="bon-footer">
+                        <h4>Total des colis: <span id="total-colis">0</span></h4>
+                    </div>
+                </div>
+
+                <!-- History -->
+                <div id="history-page" class="page hidden">
+                    <h2>Historique des Bons</h2>
+                    <div class="search-container">
+                        <input type="text" id="search-input" placeholder="Rechercher par ID, nom, téléphone ou destination...">
+                    </div>
+                    <div class="table-container">
+                        <table class="history-table">
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Expéditeur</th>
+                                    <th>Destinataire</th>
+                                    <th>Origine</th>
+                                    <th>Destination</th>
+                                    <th>Date</th>
+                                    <th>Montant</th>
+                                    <th>Payé</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="history-table-body">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Statistics -->
+                <div id="stats-page" class="page hidden">
+                    <h2>Statistiques</h2>
+                    <div class="filters">
+                        <input type="date" id="start-date">
+                        <input type="date" id="end-date">
+                        <button id="apply-filters" class="btn btn-primary">Appliquer</button>
+                    </div>
+                    <div class="stats-cards">
+                        <div class="stat-card">
+                            <h3>Revenu Total</h3>
+                            <p id="total-revenue">0.00 €</p>
+                        </div>
+                        <div class="stat-card">
+                            <h3>Total Payé</h3>
+                            <p id="paid-amount">0.00 €</p>
+                            <p id="paid-count">0 bons</p>
+                        </div>
+                        <div class="stat-card">
+                            <h3>Total Non Payé</h3>
+                            <p id="unpaid-amount">0.00 €</p>
+                            <p id="unpaid-count">0 bons</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Settings -->
+                <div id="settings-page" class="page hidden">
+                    <h2>Paramètres</h2>
+                    <div class="form-section">
+                        <h3>Configuration des bons</h3>
+                        <label for="start-number-setting">Numéro de départ des bons pour une nouvelle année:</label>
+                        <input type="number" id="start-number-setting" min="1" value="1000">
+                        <button id="save-settings" class="btn btn-primary">Enregistrer</button>
+                    </div>
+                    
+                    <div class="form-section">
+                        <h3>Profil utilisateur</h3>
+                        <label for="username-setting">Nom d'utilisateur:</label>
+                        <input type="text" id="username-setting" placeholder="Votre nom d'utilisateur" required>
+                        <button id="save-username" class="btn btn-primary">Enregistrer le nom d'utilisateur</button>
+                    </div>
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="index.js"></script>
+</body>
+</html>
