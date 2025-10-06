@@ -16,6 +16,7 @@ class IMENDITransApp {
 
     async init() {
         this.initTheme();
+        this.lastGeneratedNumber = parseInt(localStorage.getItem('lastGeneratedNumber') || '0', 10);
         this.showLoader();
         await this.initDatabase();
         this.setupEventListeners();
@@ -370,6 +371,7 @@ class IMENDITransApp {
                 if (match) {
                     const savedNumber = parseInt(match[1], 10);
                     this.lastGeneratedNumber = Math.max(this.lastGeneratedNumber, savedNumber);
+                    localStorage.setItem('lastGeneratedNumber', this.lastGeneratedNumber.toString());
                 }
             }
             this.navigateTo('history');
@@ -459,6 +461,7 @@ class IMENDITransApp {
         }
         
         this.lastGeneratedNumber = Math.max(this.lastGeneratedNumber, lastNumber);
+        localStorage.setItem('lastGeneratedNumber', this.lastGeneratedNumber.toString());
         return this.lastGeneratedNumber;
     }
 
