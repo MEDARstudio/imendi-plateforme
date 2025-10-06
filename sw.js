@@ -1,15 +1,17 @@
-const CACHE_NAME = 'imendi-trans-v1';
+const CACHE_NAME = 'imendi-trans-v2';
 const STATIC_CACHE = [
     '/',
     '/index.html',
     '/index.js',
     '/index.css',
     '/images/image300v1.png',
-    '/images/image500x200v2.png',
-    '/images/image32v2.png',
-    '/images/image180v2.png',
-    '/images/image192v2.png',
-    '/images/image512v2.png',
+    '/images/image300v3.png',
+    '/images/image500x200v1.png',
+    '/images/image500x200v3.png',
+    '/images/image32v3.png',
+    '/images/image180v3.png',
+    '/images/image192v3.png',
+    '/images/image512v3.png',
     'https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap',
     'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js',
     'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js'
