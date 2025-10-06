@@ -5,7 +5,6 @@ const STATIC_CACHE = [
     '/index.js',
     '/index.css',
     '/images/image300v1.png',
-    '/images/image300v2.png',
     '/images/image500x200v2.png',
     '/images/image32v2.png',
     '/images/image180v2.png',
