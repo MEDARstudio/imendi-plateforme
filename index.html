@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="fr">
+<html lang="fr" data-theme="light">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -26,218 +26,308 @@
                     <button id="register-tab" class="tab-btn">Inscription</button>
                 </div>
                 
-                <div id="login-form" class="auth-form">
+                <form id="login-form" class="auth-form">
                     <input type="email" id="login-email" placeholder="Email" required>
                     <input type="password" id="login-password" placeholder="Mot de passe" required>
-                    <button id="login-submit" class="btn btn-primary">Se connecter</button>
+                    <button id="login-submit" type="submit" class="btn btn-primary">Se connecter</button>
                     <div id="login-message" class="message hidden"></div>
-                </div>
+                </form>
                 
-                <div id="register-form" class="auth-form hidden">
+                <form id="register-form" class="auth-form hidden">
                     <input type="email" id="register-email" placeholder="Email" required>
                     <input type="password" id="register-password" placeholder="Mot de passe" required>
                     <input type="password" id="register-confirm-password" placeholder="Confirmer le mot de passe" required>
                     <input type="text" id="register-username" placeholder="Nom d'utilisateur" required>
-                    <button id="register-submit" class="btn btn-primary">S'inscrire</button>
+                    <button id="register-submit" type="submit" class="btn btn-primary">S'inscrire</button>
                     <div id="register-message" class="message hidden"></div>
-                </div>
+                </form>
             </div>
         </div>
 
         <!-- Main App -->
         <div id="main-app" class="hidden">
-            <!-- Header -->
-            <header class="header">
-                <div class="header-content">
+            <aside id="sidebar">
+                <div class="logo">
+                    <img src="images/image300v1.png" alt="IMENDI TRANS Logo">
+                </div>
+                <nav class="nav">
+                    <a href="#dashboard" class="nav-link active">
+                        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"></path></svg>
+                        <span>Dashboard</span>
+                    </a>
+                    <a href="#new-bon" class="nav-link">
+                        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 14h-3v3h-2v-3H8v-2h3v-3h2v3h3v2zm-3-7V3.5L18.5 9H13z"></path></svg>
+                        <span>Nouveau Bon</span>
+                    </a>
+                    <a href="#history" class="nav-link">
+                        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M13 3c-4.97 0-9 4.03-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42C8.27 19.99 10.51 21 13 21c4.97 0 9-4.03 9-9s-4.03-9-9-9zm-1 5v5l4.25 2.52.77-1.28-3.52-2.09V8H12z"></path></svg>
+                        <span>Historique</span>
+                    </a>
+                    <a href="#stats" class="nav-link">
+                        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 9.2h3V19H5zM10.6 5h2.8v14h-2.8zm5.6 8H19v6h-2.8z"></path></svg>
+                        <span>Statistiques</span>
+                    </a>
+                </nav>
+                <div class="sidebar-footer">
+                    <a href="#settings" class="nav-link">
+                        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19.43 12.98c.04-.32.07-.64.07-.98s-.03-.66-.07-.98l2.11-1.65c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.39-.3-.61-.22l-2.49 1c-.52-.4-1.08-.73-1.69-.98l-.38-2.65C14.46 2.18 14.25 2 14 2h-4c-.25 0-.46.18-.49.42l-.38 2.65c-.61.25-1.17.59-1.69.98l-2.49-1c-.23-.09-.49 0-.61.22l-2 3.46c-.13.22-.07.49.12.64l2.11 1.65c-.04.32-.07.65-.07.98s.03.66.07.98l-2.11 1.65c-.19.15-.24.42-.12.64l2 3.46c.12.22.39.3.61.22l2.49-1c.52.4 1.08.73 1.69.98l.38 2.65c.03.24.24.42.49.42h4c.25 0 .46-.18.49-.42l.38-2.65c.61-.25 1.17-.59 1.69-.98l2.49 1c.23.09.49 0 .61-.22l2-3.46c.12-.22.07-.49-.12-.64l-2.11-1.65zM12 15.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5z"></path></svg>
+                        <span>Paramètres</span>
+                    </a>
+                </div>
+            </aside>
+            <div id="content-wrapper">
+                 <header id="mobile-header">
                     <div class="logo">
                         <img src="images/image300v1.png" alt="IMENDI TRANS Logo">
                     </div>
-                    <nav class="nav">
-                        <a href="#dashboard" class="nav-link active">Dashboard</a>
-                        <a href="#new-bon" class="nav-link">Nouveau Bon</a>
-                        <a href="#history" class="nav-link">Historique</a>
-                        <a href="#stats" class="nav-link">Statistiques</a>
-                        <a href="#settings" class="nav-link">Paramètres</a>
-                        <button id="logout-btn" class="btn btn-secondary">Déconnexion</button>
-                    </nav>
-                    <button id="mobile-menu-btn" class="mobile-menu-btn" aria-label="Ouvrir le menu" aria-expanded="false">
+                     <button id="mobile-menu-btn" class="mobile-menu-btn" aria-label="Ouvrir le menu" aria-expanded="false">
                         <span></span>
                         <span></span>
                         <span></span>
                     </button>
-                </div>
-                <div id="offline-banner" class="offline-banner hidden">Hors ligne</div>
-            </header>
+                </header>
 
-            <!-- Mobile Menu -->
-            <div id="mobile-menu" class="mobile-menu">
-                <a href="#dashboard" class="nav-link">Dashboard</a>
-                <a href="#new-bon" class="nav-link">Nouveau Bon</a>
-                <a href="#history" class="nav-link">Historique</a>
-                <a href="#stats" class="nav-link">Statistiques</a>
-                <a href="#settings" class="nav-link">Paramètres</a>
-                <button id="logout-mobile-btn" class="btn btn-secondary">Déconnexion</button>
-            </div>
-            <div id="menu-overlay" class="menu-overlay"></div>
+                <div id="offline-banner" class="offline-banner hidden">Vous êtes hors ligne. Certaines fonctionnalités peuvent être limitées.</div>
 
-
-            <!-- Pages -->
-            <main class="main-content">
-                <!-- Dashboard -->
-                <div id="dashboard-page" class="page">
-                    <h2>Dashboard</h2>
-                    <div class="welcome-message">
-                        <p>Bienvenue, <span id="user-name">Utilisateur</span> !</p>
-                    </div>
-                    
-                    <div class="dashboard-cards">
-                        <div class="card">
-                            <h3>Bons Récents</h3>
-                            <div id="recent-bons"></div>
+                <main class="page-container">
+                    <!-- Dashboard -->
+                    <div id="dashboard-page" class="page">
+                        <div class="page-header">
+                            <div class="welcome-message">
+                                <h2>Bienvenue, <span id="user-name">Utilisateur</span> !</h2>
+                                <p>Voici un aperçu de votre activité récente.</p>
+                            </div>
+                            <button id="quick-create-bon" class="btn btn-primary">
+                                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"></path></svg>
+                                <span>Créer un bon</span>
+                            </button>
                         </div>
                         
-                        <div class="card">
-                            <h3>Actions Rapides</h3>
-                            <button id="quick-create-bon" class="btn btn-primary btn-large">Créer un nouveau bon</button>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- New Bon -->
-                <div id="new-bon-page" class="page hidden">
-                    <h2 id="bon-form-title">Nouveau Bon</h2>
-                    <div id="bon-header" class="bon-header">
-                        <h3>Numéro de bon: <span id="current-bon-id">En cours de génération...</span></h3>
-                    </div>
-                    <form id="bon-form">
-                        <input type="hidden" id="bon-id">
-                        <div class="form-section">
-                            <h3>Informations de l'expéditeur</h3>
-                            <div class="form-row">
-                                <input type="text" id="sender-first-name" placeholder="Prénom" required>
-                                <input type="text" id="sender-last-name" placeholder="Nom" required>
-                            </div>
-                            <input type="text" id="sender-phone" placeholder="Téléphone" required>
-                            <input type="text" id="sender-cin" placeholder="CIN" required>
-                        </div>
-
-                        <div class="form-section">
-                            <h3>Informations du destinataire</h3>
-                            <div class="form-row">
-                                <input type="text" id="recipient-first-name" placeholder="Prénom" required>
-                                <input type="text" id="recipient-last-name" placeholder="Nom" required>
-                            </div>
-                            <input type="text" id="recipient-phone" placeholder="Téléphone" required>
-                            <input type="text" id="recipient-cin" placeholder="CIN" required>
-                        </div>
-
-                        <div class="form-section">
-                            <h3>Itinéraire</h3>
-                            <div class="form-row">
-                                <input type="text" id="origin" placeholder="Origine" required>
-                                <input type="text" id="destination" placeholder="Destination" required>
-                            </div>
-                        </div>
-
-                        <div class="form-section">
-                            <h3>Bagages</h3>
-                            <div id="luggage-container">
-                                <div class="luggage-item">
-                                    <input type="text" class="luggage-type" placeholder="Type d'article" required>
-                                    <input type="number" class="luggage-quantity" placeholder="Quantité" min="1" required>
-                                    <button type="button" class="remove-luggage btn btn-danger">Supprimer</button>
+                        <div class="stats-grid-dashboard">
+                            <div class="stat-card">
+                                <div class="stat-icon"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"></path></svg></div>
+                                <div>
+                                    <h3>Bons (30j)</h3>
+                                    <p id="dashboard-bons-count">0</p>
                                 </div>
                             </div>
-                            <button type="button" id="add-luggage" class="btn btn-secondary">Ajouter un article</button>
+                            <div class="stat-card">
+                                <div class="stat-icon"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-12h2v4h-2zm0 6h2v2h-2z"></path></svg></div>
+                                <div>
+                                    <h3>Revenus (30j)</h3>
+                                    <p id="dashboard-revenue">0.00 €</p>
+                                </div>
+                            </div>
                         </div>
 
-                        <div class="form-section">
-                            <h3>Paiement</h3>
-                            <input type="number" id="total" placeholder="Montant total" step="0.01" required>
-                            <label>
-                                <input type="checkbox" id="paid"> Payé
-                            </label>
+                        <div class="card recent-bons-card">
+                            <h3>Bons Récents</h3>
+                            <div id="recent-bons-list">
+                                <div class="empty-state hidden">
+                                    <p>Vous n'avez pas encore créé de bon.</p>
+                                    <button class="btn btn-primary navigate-new-bon">Commencer maintenant</button>
+                                </div>
+                            </div>
                         </div>
+                    </div>
 
-                        <div class="form-actions">
-                            <button type="submit" class="btn btn-primary">Enregistrer</button>
-                            <button type="button" id="cancel-bon" class="btn btn-secondary">Annuler</button>
-                        </div>
-                    </form>
-                    <div id="bon-footer" class="bon-footer">
-                        <h4>Total des colis: <span id="total-colis">0</span></h4>
-                    </div>
-                </div>
+                    <!-- New Bon -->
+                    <div id="new-bon-page" class="page hidden">
+                         <div class="page-header">
+                             <h2 id="bon-form-title">Nouveau Bon</h2>
+                             <div id="bon-header" class="bon-header">
+                                <h3>Numéro de bon: <span id="current-bon-id">En cours de génération...</span></h3>
+                             </div>
+                         </div>
+                        <form id="bon-form" class="card">
+                            <input type="hidden" id="bon-id">
+                            
+                            <fieldset class="form-grid">
+                                <legend>Informations</legend>
+                                <div class="form-column">
+                                    <h4>Expéditeur</h4>
+                                    <input type="text" id="sender-first-name" placeholder="Prénom" required>
+                                    <input type="text" id="sender-last-name" placeholder="Nom" required>
+                                    <input type="tel" id="sender-phone" placeholder="Téléphone" required>
+                                    <input type="text" id="sender-cin" placeholder="CIN" required>
+                                </div>
 
-                <!-- History -->
-                <div id="history-page" class="page hidden">
-                    <h2>Historique des Bons</h2>
-                    <div class="search-container">
-                        <input type="text" id="search-input" placeholder="Rechercher par ID, nom, téléphone ou destination...">
-                    </div>
-                    <div class="table-container">
-                        <table class="history-table">
-                            <thead>
-                                <tr>
-                                    <th>ID</th>
-                                    <th>Expéditeur</th>
-                                    <th>Destinataire</th>
-                                    <th>Origine</th>
-                                    <th>Destination</th>
-                                    <th>Date</th>
-                                    <th>Montant</th>
-                                    <th>Payé</th>
-                                    <th>Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody id="history-table-body">
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
+                                <div class="form-column">
+                                    <h4>Destinataire</h4>
+                                    <input type="text" id="recipient-first-name" placeholder="Prénom" required>
+                                    <input type="text" id="recipient-last-name" placeholder="Nom" required>
+                                    <input type="tel" id="recipient-phone" placeholder="Téléphone" required>
+                                    <input type="text" id="recipient-cin" placeholder="CIN" required>
+                                </div>
+                            </fieldset>
 
-                <!-- Statistics -->
-                <div id="stats-page" class="page hidden">
-                    <h2>Statistiques</h2>
-                    <div class="filters">
-                        <input type="date" id="start-date">
-                        <input type="date" id="end-date">
-                        <button id="apply-filters" class="btn btn-primary">Appliquer</button>
-                    </div>
-                    <div class="stats-cards">
-                        <div class="stat-card">
-                            <h3>Revenu Total</h3>
-                            <p id="total-revenue">0.00 €</p>
-                        </div>
-                        <div class="stat-card">
-                            <h3>Total Payé</h3>
-                            <p id="paid-amount">0.00 €</p>
-                            <p id="paid-count">0 bons</p>
-                        </div>
-                        <div class="stat-card">
-                            <h3>Total Non Payé</h3>
-                            <p id="unpaid-amount">0.00 €</p>
-                            <p id="unpaid-count">0 bons</p>
-                        </div>
-                    </div>
-                </div>
+                             <fieldset class="form-grid">
+                                <legend>Itinéraire</legend>
+                                <div class="form-column">
+                                    <input type="text" id="origin" placeholder="Origine" required>
+                                </div>
+                                <div class="form-column">
+                                    <input type="text" id="destination" placeholder="Destination" required>
+                                </div>
+                            </fieldset>
 
-                <!-- Settings -->
-                <div id="settings-page" class="page hidden">
-                    <h2>Paramètres</h2>
-                    <div class="form-section">
-                        <h3>Profil utilisateur</h3>
-                        <label for="username-setting">Nom d'utilisateur:</label>
-                        <input type="text" id="username-setting" placeholder="Votre nom d'utilisateur" required>
-                        <button id="save-username" class="btn btn-primary">Enregistrer le nom d'utilisateur</button>
+                            <fieldset>
+                                <legend>Bagages</legend>
+                                <div id="luggage-container"></div>
+                                <button type="button" id="add-luggage" class="btn btn-secondary">
+                                    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"></path></svg>
+                                    Ajouter un article
+                                </button>
+                                <div class="bon-footer">
+                                    <h4>Total des colis: <span id="total-colis">0</span></h4>
+                                </div>
+                            </fieldset>
+                            
+                            <fieldset>
+                                <legend>Paiement</legend>
+                                <div class="payment-section">
+                                    <input type="number" id="total" placeholder="Montant total" step="0.01" required>
+                                    <div class="form-control-toggle">
+                                        <label for="paid">Payé</label>
+                                        <label class="toggle-switch">
+                                            <input type="checkbox" id="paid">
+                                            <span class="slider"></span>
+                                        </label>
+                                    </div>
+                                </div>
+                            </fieldset>
+
+                            <div class="form-actions">
+                                <button type="button" id="cancel-bon" class="btn btn-secondary">Annuler</button>
+                                <button type="submit" class="btn btn-primary">Enregistrer</button>
+                            </div>
+                        </form>
                     </div>
-                </div>
-            </main>
+
+                    <!-- History -->
+                    <div id="history-page" class="page hidden">
+                        <div class="page-header">
+                            <h2>Historique des Bons</h2>
+                        </div>
+                        <div class="card">
+                            <div class="table-controls">
+                                <div class="search-container">
+                                     <svg viewBox="0 0 24 24" fill="currentColor"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"></path></svg>
+                                    <input type="text" id="search-input" placeholder="Rechercher...">
+                                </div>
+                            </div>
+                            <div class="table-container">
+                                <table class="data-table">
+                                    <thead>
+                                        <tr>
+                                            <th>ID</th>
+                                            <th>Expéditeur</th>
+                                            <th>Destinataire</th>
+                                            <th>Trajet</th>
+                                            <th>Date</th>
+                                            <th>Montant</th>
+                                            <th>Statut</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="history-table-body">
+                                    </tbody>
+                                </table>
+                                <div id="history-empty-state" class="empty-state hidden">
+                                    <p>Aucun bon trouvé.</p>
+                                    <button class="btn btn-primary navigate-new-bon">Créer votre premier bon</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Statistics -->
+                    <div id="stats-page" class="page hidden">
+                        <div class="page-header">
+                           <h2>Statistiques</h2>
+                        </div>
+                        <div class="card">
+                            <div class="filters">
+                                <input type="date" id="start-date">
+                                <span>-</span>
+                                <input type="date" id="end-date">
+                                <button id="apply-filters" class="btn btn-primary">Appliquer</button>
+                            </div>
+                        </div>
+                        <div class="stats-grid">
+                            <div class="stat-card">
+                                <h3>Revenu Total</h3>
+                                <p id="total-revenue">0.00 €</p>
+                            </div>
+                            <div class="stat-card">
+                                <h3>Total Payé</h3>
+                                <p id="paid-amount">0.00 €</p>
+                                <span id="paid-count">0 bons</span>
+                            </div>
+                            <div class="stat-card">
+                                <h3>Total Non Payé</h3>
+                                <p id="unpaid-amount">0.00 €</p>
+                                <span id="unpaid-count">0 bons</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Settings -->
+                    <div id="settings-page" class="page hidden">
+                        <div class="page-header">
+                             <h2>Paramètres</h2>
+                        </div>
+                        <div class="card">
+                           <fieldset>
+                               <legend>Profil utilisateur</legend>
+                                <div class="form-section">
+                                    <label for="username-setting">Nom d'utilisateur:</label>
+                                    <input type="text" id="username-setting" placeholder="Votre nom d'utilisateur" required>
+                                    <button id="save-username" class="btn btn-primary">Enregistrer</button>
+                                </div>
+                           </fieldset>
+                           <fieldset>
+                               <legend>Apparence</legend>
+                               <div class="form-section appearance-section">
+                                   <span>Thème de l'application</span>
+                                   <button id="theme-toggle" class="theme-toggle-btn" aria-label="Toggle theme">
+                                        <svg class="sun" viewBox="0 0 24 24" fill="currentColor"><path d="M12 7c-2.76 0-5 2.24-5 5s2.24 5 5 5 5-2.24 5-5-2.24-5-5-5zM2 13h2c.55 0 1-.45 1-1s-.45-1-1-1H2c-.55 0-1 .45-1 1s.45 1 1 1zm18 0h2c.55 0 1-.45 1-1s-.45-1-1-1h-2c-.55 0-1 .45-1 1s.45 1 1 1zM11 2v2c0 .55.45 1 1 1s1-.45 1-1V2c0-.55-.45-1-1-1s-1 .45-1 1zm0 18v2c0 .55.45 1 1 1s1-.45 1-1v-2c0-.55-.45-1-1-1s-1 .45-1 1zM5.64 5.64c-.39-.39-1.02-.39-1.41 0-.39.39-.39 1.02 0 1.41l1.06 1.06c.39.39 1.02.39 1.41 0s.39-1.02 0-1.41L5.64 5.64zm12.73 12.73c-.39-.39-1.02-.39-1.41 0-.39.39-.39 1.02 0 1.41l1.06 1.06c.39.39 1.02.39 1.41 0 .39-.39.39-1.02 0-1.41l-1.06-1.06zM5.64 18.36l1.06-1.06c.39-.39.39-1.02 0-1.41-.39-.39-1.02-.39-1.41 0l-1.06 1.06c-.39.39-.39 1.02 0 1.41s1.02.39 1.41 0zM18.36 5.64l1.06-1.06c.39-.39.39-1.02 0-1.41-.39-.39-1.02-.39-1.41 0l-1.06 1.06c-.39.39-.39 1.02 0 1.41s1.02.39 1.41 0z"></path></svg>
+                                        <svg class="moon" viewBox="0 0 24 24" fill="currentColor"><path d="M10 2c-1.82 0-3.53.5-5 1.35 2.99 1.73 5 4.95 5 8.65s-2.01 6.92-5 8.65C6.47 21.5 8.18 22 10 22c5.52 0 10-4.48 10-10S15.52 2 10 2z"></path></svg>
+                                    </button>
+                               </div>
+                           </fieldset>
+                        </div>
+                        <div class="card danger-zone">
+                            <button id="logout-btn" class="btn btn-danger">
+                                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M17 7l-1.41 1.41L18.17 11H8v2h10.17l-2.58 2.58L17 17l5-5zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4V5z"></path></svg>
+                                <span>Déconnexion</span>
+                            </button>
+                        </div>
+                    </div>
+                </main>
+            </div>
         </div>
     </div>
 
+    <!-- Confirmation Modal -->
+    <div id="confirmation-modal" class="modal-overlay hidden">
+        <div class="modal-content">
+            <h3 id="modal-title">Confirmation</h3>
+            <p id="modal-message">Êtes-vous sûr de vouloir continuer ?</p>
+            <div class="modal-actions">
+                <button id="cancel-modal-btn" class="btn btn-secondary">Annuler</button>
+                <button id="confirm-modal-btn" class="btn btn-primary">Confirmer</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="toast-container"></div>
+    <div id="loader-overlay" class="hidden">
+        <div class="spinner"></div>
+    </div>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.5.23/dist/jspdf.plugin.autotable.min.js"></script>
     <script src="index.js"></script>
 </body>
 </html>
