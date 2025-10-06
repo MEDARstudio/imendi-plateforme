@@ -74,6 +74,7 @@ class IMENDITransApp {
         document.getElementById('quick-create-bon').addEventListener('click', () => this.navigateTo('new-bon'));
         document.querySelectorAll('.navigate-new-bon').forEach(btn => btn.addEventListener('click', () => this.navigateTo('new-bon')));
         document.getElementById('bon-form').addEventListener('submit', (e) => this.handleBonFormSubmit(e));
+        document.getElementById('retry-bon-id').addEventListener('click', () => this.loadNewBon());
 
         // History
         document.getElementById('search-input').addEventListener('input', (e) => this.searchBons(e.target.value));
@@ -337,7 +338,7 @@ class IMENDITransApp {
             this.showMessage("Erreur de session, impossible de sauvegarder. Veuillez vous reconnecter.", "error");
             return;
         }
-        const isEditing = document.getElementById('bon-id-field').readOnly;
+        const isEditing = !!document.getElementById('bon-form').dataset.editingId;
         const title = isEditing ? 'Confirmer la modification' : 'Confirmer la création';
         const message = isEditing ? 'Voulez-vous vraiment enregistrer les modifications de ce bon ?' : 'Voulez-vous vraiment créer ce nouveau bon ?';
         this.showConfirmationModal(title, message, () => this.saveBon());
@@ -345,8 +346,8 @@ class IMENDITransApp {
 
     async saveBon() {
         this.showLoader();
-        const isEditing = document.getElementById('bon-id-field').readOnly;
-        const formData = this.pendingBonData;
+        const isEditing = !!document.getElementById('bon-form').dataset.editingId;
+        let formData = this.pendingBonData;
 
         try {
             if (!formData || !formData.user_id) {
@@ -362,8 +363,23 @@ class IMENDITransApp {
                     await this.storeOffline(formData);
                     this.showMessage('Bon sauvegardé localement. Il sera synchronisé plus tard.', 'info');
                 } else {
-                    await this.submitToSupabase(formData);
-                    this.showMessage('Bon enregistré avec succès !', 'success');
+                    try {
+                        await this.submitToSupabase(formData);
+                         this.showMessage('Bon enregistré avec succès !', 'success');
+                    } catch (error) {
+                        if (error.message === "DUPLICATE_ID") {
+                            console.warn("Duplicate ID detected, attempting to recover.");
+                            this.showMessage('Conflit de N° de bon, tentative de correction...', 'warning');
+                            
+                            await this.loadNewBon(); // Reload to get a fresh number from server
+                            formData.id = document.getElementById('bon-id-field').value;
+                            
+                            await this.submitToSupabase(formData);
+                            this.showMessage('Correction réussie. Bon enregistré avec le nouveau N°.', 'success');
+                        } else {
+                            throw error;
+                        }
+                    }
                 }
                 
                 const bonIdRegex = /^BON-\d{4}-(\d+)$/;
@@ -376,7 +392,11 @@ class IMENDITransApp {
             }
             this.navigateTo('history');
         } catch (error) {
-            this.showMessage(`Erreur: ${error.message}`, 'error');
+            if (error.message === "DUPLICATE_ID") {
+                this.showMessage('La correction automatique a échoué. Le N° de bon existe déjà.', 'error');
+            } else {
+                this.showMessage(`Erreur: ${error.message}`, 'error');
+            }
             console.error("Save Bon Error:", error);
         } finally {
             this.hideLoader();
@@ -407,71 +427,6 @@ class IMENDITransApp {
         };
     }
     
-    async fetchLastBonNumberFromServer() {
-        const year = new Date().getFullYear();
-        let lastNumber = 0;
-    
-        if (this.offlineMode) {
-            console.warn("Mode hors ligne : impossible de récupérer le dernier numéro de bon. Utilisation du compteur local.");
-            return this.lastGeneratedNumber;
-        }
-    
-        try {
-            const token = localStorage.getItem('access_token');
-            if (!token) throw new Error("Utilisateur non authentifié.");
-    
-            if (!this.currentUser || !this.currentUser.id) {
-                console.error("User data not available for fetching bon number.");
-                throw new Error("SESSION_ERROR");
-            }
-    
-            const response = await fetch(
-                `${SUPABASE_URL}/rest/v1/bons?user_id=eq.${this.currentUser.id}&id=like.BON-${year}-%&select=id`, {
-                    headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${token}` }
-                }
-            );
-    
-            if (response.ok) {
-                const bons = await response.json();
-                if (bons.length > 0) {
-                    const bonNumbers = bons
-                        .map(bon => {
-                            const match = bon.id.match(/^BON-\d{4}-(\d+)$/);
-                            return match ? parseInt(match[1], 10) : 0;
-                        })
-                        .filter(num => !isNaN(num) && num > 0);
-                    
-                    if (bonNumbers.length > 0) {
-                        lastNumber = Math.max(...bonNumbers);
-                    }
-                }
-            } else {
-                 const errorData = await response.json();
-                 console.error("Échec de la récupération des bons:", errorData);
-                 throw new Error(errorData.message || "SERVER_COMMUNICATION_ERROR");
-            }
-        } catch (error) {
-            console.error("Erreur critique lors de la récupération du dernier numéro de bon :", error);
-            if (error.message.includes("SESSION_ERROR")) {
-                this.showMessage("Erreur de session. Reconnexion requise.", "error");
-            } else {
-                this.showMessage("Erreur de synchronisation du N° de bon. Vérifiez les permissions (RLS SELECT) et la connexion.", "warning");
-            }
-            return this.lastGeneratedNumber;
-        }
-        
-        this.lastGeneratedNumber = Math.max(this.lastGeneratedNumber, lastNumber);
-        localStorage.setItem('lastGeneratedNumber', this.lastGeneratedNumber.toString());
-        return this.lastGeneratedNumber;
-    }
-
-    async generateNextBonId() {
-        const lastNumber = await this.fetchLastBonNumberFromServer();
-        const year = new Date().getFullYear();
-        const nextNum = lastNumber + 1;
-        return `BON-${year}-${nextNum.toString().padStart(4, '0')}`;
-    }
-
     async submitToSupabase(data) {
         if (!this.currentUser || !this.currentUser.id) {
             throw new Error("Session invalide. Impossible d'enregistrer.");
@@ -489,6 +444,9 @@ class IMENDITransApp {
         });
         if (!response.ok) {
             const errorData = await response.json().catch(() => ({ message: 'Échec de la soumission à la base de données. Vérifiez votre connexion et les permissions (RLS).' }));
+            if (response.status === 409 && errorData.code === '23505') {
+                throw new Error("DUPLICATE_ID");
+            }
             throw new Error(errorData.message || 'Une erreur de communication est survenue.');
         }
         return response.json();
@@ -587,15 +545,32 @@ class IMENDITransApp {
     }
     
     async loadNewBon(bon = null) {
-        document.getElementById('bon-form').reset();
+        const form = document.getElementById('bon-form');
+        form.reset();
         document.getElementById('luggage-container').innerHTML = '';
         const bonIdField = document.getElementById('bon-id-field');
-
-        if (bon) {
+        const errorContainer = document.getElementById('bon-id-error');
+    
+        const toggleFormState = (enabled, isError = false) => {
+            form.querySelectorAll('input:not(#bon-id-field), button:not(#retry-bon-id):not(#cancel-bon)').forEach(el => {
+                el.disabled = !enabled;
+            });
+            bonIdField.readOnly = true; // Always readonly
+            if (isError) {
+                errorContainer.classList.remove('hidden');
+                form.querySelector('button[type="submit"]').disabled = true;
+            } else {
+                errorContainer.classList.add('hidden');
+            }
+        };
+        
+        delete form.dataset.editingId;
+    
+        if (bon) { // Editing existing bon
             document.getElementById('bon-form-title').textContent = 'Modifier le Bon';
+            form.dataset.editingId = bon.id;
             bonIdField.value = bon.id;
-            bonIdField.readOnly = true;
-
+    
             Object.keys(bon).forEach(key => {
                 const elId = key.replace(/_/g, '-');
                 const el = document.getElementById(elId);
@@ -605,19 +580,81 @@ class IMENDITransApp {
                 }
             });
             (bon.luggage || []).forEach(item => this.addLuggageItem(item));
-        } else {
+            toggleFormState(true);
+    
+        } else { // Creating new bon
             document.getElementById('bon-form-title').textContent = 'Nouveau Bon';
-            bonIdField.readOnly = false;
-            bonIdField.value = "Génération en cours...";
-            
-            this.generateNextBonId().then(nextId => {
-                bonIdField.value = nextId;
-            });
-            
-            this.addLuggageItem();
+            bonIdField.value = 'Synchronisation...';
+            toggleFormState(false);
+    
+            if (!navigator.onLine) {
+                const lastNumber = this.lastGeneratedNumber;
+                const year = new Date().getFullYear();
+                const nextNum = lastNumber + 1;
+                bonIdField.value = `BON-${year}-${nextNum.toString().padStart(4, '0')}`;
+                this.addLuggageItem();
+                toggleFormState(true);
+                this.updateTotalColis();
+                return;
+            }
+    
+            try {
+                const token = localStorage.getItem('access_token');
+                if (!token || !this.currentUser || !this.currentUser.id) {
+                    throw new Error("AUTH_ERROR");
+                }
+    
+                const year = new Date().getFullYear();
+                const response = await fetch(
+                    `${SUPABASE_URL}/rest/v1/bons?user_id=eq.${this.currentUser.id}&id=like.BON-${year}-%&select=id`,
+                    { headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${token}` } }
+                );
+    
+                if (response.status === 401 || response.status === 403) {
+                    throw new Error("AUTH_ERROR");
+                }
+    
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({ message: `Le serveur a répondu avec une erreur (${response.status})` }));
+                    throw new Error(errorData.message);
+                }
+    
+                const bons = await response.json();
+                let serverLastNumber = 0;
+                if (bons.length > 0) {
+                    const bonNumbers = bons.map(b => parseInt((b.id.split('-')[2] || '0'), 10));
+                    serverLastNumber = Math.max(...bonNumbers);
+                }
+    
+                this.lastGeneratedNumber = Math.max(this.lastGeneratedNumber, serverLastNumber);
+                localStorage.setItem('lastGeneratedNumber', this.lastGeneratedNumber.toString());
+    
+                const nextNum = this.lastGeneratedNumber + 1;
+                bonIdField.value = `BON-${year}-${nextNum.toString().padStart(4, '0')}`;
+                
+                this.addLuggageItem();
+                toggleFormState(true, false);
+    
+            } catch (error) {
+                if (error.message === "AUTH_ERROR") {
+                    await this.handleLogout();
+                    return;
+                }
+    
+                console.warn("Could not sync bon number, falling back to local cache.", error);
+                
+                const year = new Date().getFullYear();
+                const lastNumber = this.lastGeneratedNumber;
+                const nextNum = lastNumber + 1;
+                bonIdField.value = `BON-${year}-${nextNum.toString().padStart(4, '0')}`;
+                
+                this.addLuggageItem();
+                toggleFormState(true, false); // Enable form, hide inline error
+            }
         }
         this.updateTotalColis();
     }
+
 
     async loadHistory() {
         this.showLoader();
