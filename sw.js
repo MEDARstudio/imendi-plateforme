@@ -28,12 +28,21 @@ self.addEventListener('install', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
+    // Strategy for API calls to Supabase
     if (event.request.url.includes(SUPABASE_URL)) {
-        // Network-first for API calls
+        // For non-GET requests (POST, PATCH, etc.), do not use the service worker.
+        // Let the browser handle them directly. This is crucial for ensuring mutations
+        // reach the server correctly when online. The app's own logic will queue them for
+        // background sync if the request fails (i.e., when offline).
+        if (event.request.method !== 'GET') {
+            return;
+        }
+
+        // For GET requests, use a "network-first, then cache" strategy.
         event.respondWith(
             fetch(event.request)
                 .then((response) => {
-                    // Cache successful responses
+                    // If the network request is successful, update the cache.
                     if (response.ok) {
                         const responseClone = response.clone();
                         caches.open(CACHE_NAME).then((cache) => {
@@ -43,26 +52,29 @@ self.addEventListener('fetch', (event) => {
                     return response;
                 })
                 .catch(() => {
-                    // Return cached response if network fails
+                    // If the network fails, serve the response from the cache.
                     return caches.match(event.request);
                 })
         );
     } else if (event.request.mode === 'navigate') {
-        // Network-first for navigation
+        // Strategy for page navigation
         event.respondWith(
             fetch(event.request)
                 .then((response) => {
                     if (response.ok) {
                         return response;
                     }
+                    // If we get a 404 or other error, serve the app shell from cache.
                     return caches.match('/index.html');
                 })
                 .catch(() => {
+                    // If the network is down, serve the app shell from cache.
                     return caches.match('/index.html');
                 })
         );
     } else {
-        // Cache-first for static assets
+        // Strategy for static assets (CSS, JS, images)
+        // Use a "cache-first" strategy for performance.
         event.respondWith(
             caches.match(event.request)
                 .then((response) => {
@@ -72,6 +84,7 @@ self.addEventListener('fetch', (event) => {
     }
 });
 
+
 self.addEventListener('sync', (event) => {
     if (event.tag === 'sync-bons') {
         event.waitUntil(syncBons());
@@ -80,18 +93,26 @@ self.addEventListener('sync', (event) => {
 
 async function syncBons() {
     const db = await openDB();
-    const transaction = db.transaction(['sync-queue'], 'readonly');
-    const store = transaction.objectStore('sync-queue');
-    const items = await store.getAll();
+    const items = await new Promise((resolve, reject) => {
+        const transaction = db.transaction(['sync-queue'], 'readonly');
+        const store = transaction.objectStore('sync-queue');
+        const request = store.getAll();
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+    });
+    
+    if (!items || items.length === 0) {
+        return;
+    }
+
+    const token = await getAccessToken();
+    if (!token) {
+        console.error('No access token available for sync. Sync will be retried later.');
+        return;
+    }
     
     for (const item of items) {
         try {
-            const token = await getAccessToken();
-            if (!token) {
-                console.error('No access token available');
-                continue;
-            }
-            
             const response = await fetch(`${SUPABASE_URL}/rest/v1/bons`, {
                 method: 'POST',
                 headers: {
@@ -105,9 +126,13 @@ async function syncBons() {
             
             if (response.ok) {
                 // Remove from queue
-                const writeTx = db.transaction(['sync-queue'], 'readwrite');
-                const writeStore = writeTx.objectStore('sync-queue');
-                await writeStore.delete(item.id);
+                await new Promise((resolve, reject) => {
+                    const writeTx = db.transaction(['sync-queue'], 'readwrite');
+                    writeTx.oncomplete = resolve;
+                    writeTx.onerror = reject;
+                    const writeStore = writeTx.objectStore('sync-queue');
+                    writeStore.delete(item.id);
+                });
             } else {
                 console.error('Failed to sync bon:', await response.text());
             }
@@ -127,26 +152,27 @@ async function openDB() {
         request.onupgradeneeded = (event) => {
             const db = event.target.result;
             if (!db.objectStoreNames.contains('sync-queue')) {
-                const store = db.createObjectStore('sync-queue', { keyPath: 'id', autoIncrement: true });
-                store.createIndex('type', 'type');
-                store.createIndex('timestamp', 'timestamp');
+                db.createObjectStore('sync-queue', { keyPath: 'id', autoIncrement: true });
+            }
+            if (!db.objectStoreNames.contains('app-state')) {
+                db.createObjectStore('app-state');
             }
         };
     });
 }
 
 async function getAccessToken() {
-    // This is a simplified version - in a real app you'd need proper token management
-    // For now, we'll try to get it from clients
-    const clients = await self.clients.matchAll();
-    for (const client of clients) {
-        // In a real implementation, you'd have a more sophisticated way to get the token
-        // This is just a placeholder
+    try {
+        const db = await openDB();
+        return await new Promise((resolve, reject) => {
+            const transaction = db.transaction(['app-state'], 'readonly');
+            const store = transaction.objectStore('app-state');
+            const request = store.get('access_token');
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        });
+    } catch (error) {
+        console.error('Failed to get access token from IndexedDB:', error);
+        return null;
     }
-    // Return the token from storage - this is a workaround
-    return await new Promise((resolve) => {
-        // This won't work directly from service worker
-        // The proper solution would be to have the main app sync the token
-        resolve(null);
-    });
 }
