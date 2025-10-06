@@ -142,7 +142,11 @@
                         <form id="bon-form" class="card">
                             <fieldset>
                                 <label for="bon-id-field">Numéro de Bon</label>
-                                <input type="text" id="bon-id-field" placeholder="Génération en cours..." required>
+                                <input type="text" id="bon-id-field" placeholder="Génération en cours..." required readonly>
+                                <div id="bon-id-error" class="hidden" style="color: var(--c-danger); font-size: 0.9rem; margin-top: 0.5rem; display: flex; align-items: center; gap: 1rem;">
+                                    <span id="bon-id-error-message"></span>
+                                    <button type="button" id="retry-bon-id" class="btn btn-secondary" style="padding: 0.25rem 0.75rem; font-size: 0.9rem;">Réessayer</button>
+                                </div>
                             </fieldset>
                             
                             <fieldset class="form-grid">
