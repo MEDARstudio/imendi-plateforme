@@ -105,10 +105,18 @@ body {
 }
 
 /* Logo theming */
-.logo-light { display: block; }
-.logo-dark { display: none; }
-html[data-theme="dark"] .logo-light { display: none; }
-html[data-theme="dark"] .logo-dark { display: block; }
+html[data-theme="light"] .logo-light {
+    display: block;
+}
+html[data-theme="light"] .logo-dark {
+    display: none;
+}
+html[data-theme="dark"] .logo-light {
+    display: none;
+}
+html[data-theme="dark"] .logo-dark {
+    display: block;
+}
 
 #sidebar {
     width: 260px;
