@@ -705,26 +705,99 @@ class IMENDITransApp {
     hideLoader() { document.getElementById('loader-overlay').classList.add('hidden'); }
     
     async shareBon(id) {
+        if (!navigator.share) {
+            this.showMessage('Le partage n\'est pas supporté sur ce navigateur.', 'info');
+            return;
+        }
+
         this.showLoader();
         try {
+            // 1. Fetch bon data
             const token = localStorage.getItem('access_token');
-            const response = await fetch(`${SUPABASE_URL}/rest/v1/bons?id=eq.${id}`, { headers: {'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${token}`}});
-            if (!response.ok) throw new Error("Bon not found");
+            const response = await fetch(`${SUPABASE_URL}/rest/v1/bons?id=eq.${id}`, { headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${token}` } });
+            if (!response.ok) throw new Error("Bon non trouvé");
             const bon = (await response.json())[0];
-            
-            const shareText = `Bon d'expédition ${bon.id}\nExpéditeur: ${bon.sender_first_name}\nDestinataire: ${bon.recipient_first_name}\nTrajet: ${bon.origin} -> ${bon.destination}`;
-            
-            if (navigator.share) {
-                await navigator.share({ title: `Bon d'expédition ${id}`, text: shareText });
+
+            // 2. Create an off-screen element to render the bon image
+            const bonElement = document.createElement('div');
+            bonElement.id = 'bon-for-sharing';
+            Object.assign(bonElement.style, {
+                position: 'absolute',
+                left: '-9999px',
+                width: '400px',
+                padding: '20px',
+                fontFamily: 'Arial, sans-serif',
+                backgroundColor: '#ffffff',
+                border: '1px solid #ccc',
+                color: '#333'
+            });
+
+            const statusColor = bon.paid ? '#22c55e' : '#ef4444';
+            const senderName = `${bon.sender_first_name || ''} ${bon.sender_last_name || ''}`.trim();
+            const recipientName = `${bon.recipient_first_name || ''} ${bon.recipient_last_name || ''}`.trim();
+
+            bonElement.innerHTML = `
+                <div style="background-color: #1E3A8A; color: white; padding: 15px; text-align: center; margin: -20px -20px 20px -20px;">
+                    <h2 style="margin: 0; font-size: 1.5em;">BON D'EXPÉDITION</h2>
+                    <p style="margin: 5px 0 0; font-weight: bold;">IMENDI TRANS</p>
+                </div>
+                <p style="text-align: right; margin-bottom: 15px; font-size: 0.9em;"><strong>Numéro:</strong> ${bon.id}</p>
+                <div style="display: flex; justify-content: space-between; margin-bottom: 20px; border-top: 1px solid #eee; padding-top: 15px;">
+                    <div style="width: 48%;">
+                        <h3 style="font-size: 1.1em; color: #1E3A8A; margin-top: 0;">Expéditeur</h3>
+                        <p style="margin: 4px 0;"><strong>Nom:</strong> ${senderName}</p>
+                        <p style="margin: 4px 0;"><strong>Tél:</strong> ${bon.sender_phone}</p>
+                    </div>
+                    <div style="width: 48%;">
+                        <h3 style="font-size: 1.1em; color: #1E3A8A; margin-top: 0;">Destinataire</h3>
+                        <p style="margin: 4px 0;"><strong>Nom:</strong> ${recipientName}</p>
+                        <p style="margin: 4px 0;"><strong>Tél:</strong> ${bon.recipient_phone}</p>
+                    </div>
+                </div>
+                <div style="border-top: 1px solid #eee; padding-top: 15px;">
+                     <h3 style="font-size: 1.1em; color: #1E3A8A; margin-top: 0;">Détails de l'expédition</h3>
+                     <p style="margin: 4px 0;"><strong>De:</strong> ${bon.origin || 'N/A'}</p>
+                     <p style="margin: 4px 0;"><strong>À:</strong> ${bon.destination || 'N/A'}</p>
+                </div>
+                <div style="border-top: 1px solid #eee; padding-top: 15px; margin-top: 20px; text-align: right;">
+                    <p style="margin: 4px 0; font-size: 1.2em;"><strong>Total:</strong> ${bon.total.toFixed(2)} €</p>
+                    <p style="margin: 4px 0; font-size: 1.2em; color: ${statusColor};"><strong>Statut:</strong> ${bon.paid ? 'Payé' : 'Non Payé'}</p>
+                </div>
+            `;
+            document.body.appendChild(bonElement);
+
+            // 3. Use html2canvas to create image
+            const canvas = await html2canvas(bonElement, { scale: 2 });
+            const dataUrl = canvas.toDataURL('image/png');
+
+            // 4. Convert data URL to blob/file
+            const blob = await (await fetch(dataUrl)).blob();
+            const file = new File([blob], `bon-${id}.png`, { type: 'image/png' });
+
+            // 5. Clean up the temporary element
+            document.body.removeChild(bonElement);
+
+            // 6. Use Web Share API
+            const shareData = {
+                files: [file],
+                title: `Bon d'expédition ${id}`,
+                text: `Voici le bon d'expédition ${id} de IMENDI TRANS.`,
+            };
+
+            if (navigator.canShare && navigator.canShare(shareData)) {
+                await navigator.share(shareData);
             } else {
-                this.showMessage('Partage non supporté sur ce navigateur.', 'info');
+                this.showMessage('Partage de fichiers non supporté.', 'info');
             }
+
         } catch (error) {
-            this.showMessage('Erreur lors du partage.', 'error');
+            console.error('Share error:', error);
+            this.showMessage(`Erreur lors du partage: ${error.message}`, 'error');
         } finally {
             this.hideLoader();
         }
     }
+
     async exportPDF(id) {
         this.showLoader();
         try {
