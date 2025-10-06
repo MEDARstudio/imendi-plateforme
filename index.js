@@ -6,101 +6,89 @@ class IMENDITransApp {
     constructor() {
         this.currentUser = null;
         this.currentView = 'dashboard';
-        this.pageOrder = ['dashboard', 'new-bon', 'history', 'stats', 'settings'];
         this.offlineMode = !navigator.onLine;
         this.db = null;
-        this.lastGeneratedNumber = 0; // Tracks the last number used in this session
+        this.lastGeneratedNumber = 0;
+        this.pendingBonData = null; // For confirmation modal
         
         this.init();
     }
 
     async init() {
+        this.initTheme();
+        this.showLoader();
         await this.initDatabase();
         this.setupEventListeners();
         await this.checkAuthStatus();
         this.registerServiceWorker();
         this.updateOfflineBanner();
+        this.hideLoader();
+    }
+
+    initTheme() {
+        const storedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+        document.documentElement.setAttribute('data-theme', storedTheme);
     }
 
     async initDatabase() {
         return new Promise((resolve, reject) => {
             const request = indexedDB.open('IMENDITrans', 1);
-            
             request.onerror = () => reject(request.error);
-            request.onsuccess = () => {
-                this.db = request.result;
-                resolve();
-            };
-            
+            request.onsuccess = () => { this.db = request.result; resolve(); };
             request.onupgradeneeded = (event) => {
                 const db = event.target.result;
-                
                 if (!db.objectStoreNames.contains('sync-queue')) {
-                    const store = db.createObjectStore('sync-queue', { keyPath: 'id', autoIncrement: true });
-                    store.createIndex('type', 'type');
-                    store.createIndex('timestamp', 'timestamp');
+                    db.createObjectStore('sync-queue', { keyPath: 'id', autoIncrement: true });
                 }
             };
         });
     }
 
     setupEventListeners() {
-        // Auth events
+        // Auth
         document.getElementById('login-tab').addEventListener('click', () => this.switchAuthTab('login'));
         document.getElementById('register-tab').addEventListener('click', () => this.switchAuthTab('register'));
-        document.getElementById('login-submit').addEventListener('click', (e) => this.handleLogin(e));
-        document.getElementById('register-submit').addEventListener('click', (e) => this.handleRegister(e));
+        document.getElementById('login-form').addEventListener('submit', (e) => this.handleLogin(e));
+        document.getElementById('register-form').addEventListener('submit', (e) => this.handleRegister(e));
 
-        // Navigation events
-        document.querySelectorAll('.nav-link').forEach(link => {
-            link.addEventListener('click', (e) => this.handleNavigation(e));
+        // Navigation
+        document.querySelectorAll('.nav-link').forEach(link => link.addEventListener('click', (e) => this.handleNavigation(e)));
+
+        // Mobile Menu
+        document.getElementById('mobile-menu-btn').addEventListener('click', (e) => {
+            e.stopPropagation(); // Prevent click from bubbling up to content-wrapper
+            this.toggleMobileMenu();
         });
-
-        // Mobile menu
-        document.getElementById('mobile-menu-btn').addEventListener('click', () => this.toggleMobileMenu());
-        document.getElementById('logout-mobile-btn').addEventListener('click', () => this.handleLogout());
-        document.getElementById('menu-overlay').addEventListener('click', () => this.closeMobileMenu());
+        document.getElementById('content-wrapper').addEventListener('click', () => this.closeMobileMenu());
 
         // Logout
         document.getElementById('logout-btn').addEventListener('click', () => this.handleLogout());
 
-        // New Bon events
-        document.getElementById('add-luggage').addEventListener('click', () => this.addLuggageItem());
+        // New Bon
+        document.getElementById('add-luggage').addEventListener('click', () => this.addLuggageItem(null));
         document.getElementById('cancel-bon').addEventListener('click', () => this.cancelBon());
         document.getElementById('quick-create-bon').addEventListener('click', () => this.navigateTo('new-bon'));
+        document.querySelectorAll('.navigate-new-bon').forEach(btn => btn.addEventListener('click', () => this.navigateTo('new-bon')));
+        document.getElementById('bon-form').addEventListener('submit', (e) => this.handleBonFormSubmit(e));
 
-        // History events
+        // History
         document.getElementById('search-input').addEventListener('input', (e) => this.searchBons(e.target.value));
 
-        // Statistics events
+        // Statistics
         document.getElementById('apply-filters').addEventListener('click', () => this.loadStatistics());
 
-        // Settings events
+        // Settings
         document.getElementById('save-username').addEventListener('click', () => this.saveUsername());
-
-        // Form submission
-        document.getElementById('bon-form').addEventListener('submit', (e) => this.handleSubmitBon(e));
 
         // Online/Offline detection
         window.addEventListener('online', () => this.handleOnline());
         window.addEventListener('offline', () => this.handleOffline());
-
-        // Remove luggage items
-        document.getElementById('luggage-container').addEventListener('click', (e) => {
-            if (e.target.classList.contains('remove-luggage')) {
-                const container = document.getElementById('luggage-container');
-                if (container.children.length > 1) {
-                    e.target.parentElement.remove();
-                    this.updateTotalColis();
-                }
-            }
-        });
-
-        // Update total colis when luggage items change
-        document.getElementById('luggage-container').addEventListener('input', (e) => {
-            if (e.target.classList.contains('luggage-quantity')) {
-                this.updateTotalColis();
-            }
+        
+        // Modal
+        document.getElementById('confirm-modal-btn').addEventListener('click', () => this.confirmModalAction());
+        document.getElementById('cancel-modal-btn').addEventListener('click', () => this.hideConfirmationModal());
+        document.getElementById('confirmation-modal').addEventListener('click', (e) => {
+            if (e.target.id === 'confirmation-modal') this.hideConfirmationModal();
         });
     }
 
@@ -108,7 +96,6 @@ class IMENDITransApp {
         if ('serviceWorker' in navigator) {
             try {
                 await navigator.serviceWorker.register('/sw.js');
-                console.log('Service Worker registered');
             } catch (error) {
                 console.error('Service Worker registration failed:', error);
             }
@@ -130,131 +117,76 @@ class IMENDITransApp {
 
     async handleLogin(event) {
         event.preventDefault();
-        
+        this.showLoader();
         const email = document.getElementById('login-email').value;
         const password = document.getElementById('login-password').value;
-        const messageEl = document.getElementById('login-message');
 
         try {
             const response = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'apikey': SUPABASE_ANON_KEY,
-                    'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-                },
+                headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${SUPABASE_ANON_KEY}`},
                 body: JSON.stringify({ email, password })
             });
-
             const data = await response.json();
 
             if (response.ok) {
                 localStorage.setItem('access_token', data.access_token);
-                localStorage.setItem('refresh_token', data.refresh_token);
                 this.currentUser = data.user;
                 await this.initializeLastGeneratedNumber();
                 this.showPage('main-app');
                 this.navigateTo('dashboard');
-                await this.loadDashboard();
             } else {
-                messageEl.textContent = data.error_description || 'Identifiants incorrects';
-                messageEl.classList.remove('hidden');
+                this.showMessage(data.error_description || 'Identifiants incorrects', 'error');
             }
         } catch (error) {
-            console.error('Login error:', error);
-            messageEl.textContent = 'Erreur de connexion';
-            messageEl.classList.remove('hidden');
+            this.showMessage('Erreur de connexion', 'error');
+        } finally {
+            this.hideLoader();
         }
     }
 
     async handleRegister(event) {
         event.preventDefault();
+        this.showLoader();
         
         const email = document.getElementById('register-email').value;
         const password = document.getElementById('register-password').value;
         const confirmPassword = document.getElementById('register-confirm-password').value;
         const username = document.getElementById('register-username').value.trim();
-        const messageEl = document.getElementById('register-message');
 
         if (password !== confirmPassword) {
-            messageEl.textContent = 'Les mots de passe ne correspondent pas';
-            messageEl.classList.remove('hidden');
+            this.showMessage('Les mots de passe ne correspondent pas', 'error');
+            this.hideLoader();
             return;
         }
-
         if (!username) {
-            messageEl.textContent = 'Veuillez entrer un nom d\'utilisateur';
-            messageEl.classList.remove('hidden');
+            this.showMessage('Veuillez entrer un nom d\'utilisateur', 'error');
+            this.hideLoader();
             return;
         }
 
         try {
-            // First, create the user
             const response = await fetch(`${SUPABASE_URL}/auth/v1/signup`, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'apikey': SUPABASE_ANON_KEY,
-                    'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-                },
-                body: JSON.stringify({ email, password })
+                headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON_KEY },
+                body: JSON.stringify({ email, password, data: { username: username } })
             });
-
             const data = await response.json();
 
-            if (response.ok) {
-                // After successful registration, create profile with username
-                await this.createProfile(data.user.id, username);
-                
-                messageEl.textContent = 'Compte créé avec succès !';
-                messageEl.className = 'message success';
-                messageEl.classList.remove('hidden');
-                
-                // Auto-switch to login after 2 seconds
+            if (data.user) {
+                this.showMessage('Compte créé avec succès ! Redirection vers la connexion...', 'success');
                 setTimeout(() => {
                     this.switchAuthTab('login');
                     document.getElementById('login-email').value = email;
-                    document.getElementById('register-email').value = '';
-                    document.getElementById('register-password').value = '';
-                    document.getElementById('register-confirm-password').value = '';
-                    document.getElementById('register-username').value = '';
-                    messageEl.classList.add('hidden');
-                    messageEl.className = 'message hidden';
                 }, 2000);
             } else {
-                messageEl.textContent = data.error_description || 'Erreur lors de l\'inscription';
-                messageEl.classList.remove('hidden');
+                 this.showMessage(data.msg || 'Erreur lors de l\'inscription', 'error');
             }
-        } catch (error) {
-            console.error('Registration error:', error);
-            messageEl.textContent = 'Erreur de connexion';
-            messageEl.classList.remove('hidden');
-        }
-    }
 
-    async createProfile(userId, username) {
-        try {
-            const token = localStorage.getItem('access_token');
-            const response = await fetch(`${SUPABASE_URL}/rest/v1/profiles`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'apikey': SUPABASE_ANON_KEY,
-                    'Authorization': `Bearer ${token}`,
-                    'Prefer': 'return=representation'
-                },
-                body: JSON.stringify({ 
-                    id: userId,
-                    username: username,
-                    full_name: username
-                })
-            });
-            
-            if (response.ok) {
-                console.log('Profile created successfully');
-            }
         } catch (error) {
-            console.error('Error creating profile:', error);
+            this.showMessage('Erreur lors de l\'inscription', 'error');
+        } finally {
+            this.hideLoader();
         }
     }
 
@@ -262,22 +194,18 @@ class IMENDITransApp {
         const token = localStorage.getItem('access_token');
         if (token) {
             try {
-                const response = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
-                    headers: {
-                        'Authorization': `Bearer ${token}`
-                    }
-                });
-
+                const response = await fetch(`${SUPABASE_URL}/auth/v1/user`, { headers: { 'Authorization': `Bearer ${token}`, 'apikey': SUPABASE_ANON_KEY }});
                 if (response.ok) {
                     this.currentUser = await response.json();
                     await this.initializeLastGeneratedNumber();
                     this.showPage('main-app');
-                    await this.loadDashboard();
+                    const savedView = localStorage.getItem('currentView') || 'dashboard';
+                    this.navigateTo(savedView);
                 } else {
+                    localStorage.removeItem('access_token');
                     this.showPage('auth-page');
                 }
             } catch (error) {
-                console.error('Auth check error:', error);
                 this.showPage('auth-page');
             }
         } else {
@@ -287,50 +215,32 @@ class IMENDITransApp {
 
     handleNavigation(event) {
         event.preventDefault();
-        const target = event.target.getAttribute('href').substring(1);
+        const target = event.currentTarget.getAttribute('href').substring(1);
         this.navigateTo(target);
     }
-
+    
     navigateTo(view) {
-        if (this.currentView === view) return;
-    
-        const oldView = this.currentView;
-        const oldIndex = this.pageOrder.indexOf(oldView);
-        const newIndex = this.pageOrder.indexOf(view);
-    
-        const currentPage = document.getElementById(`${oldView}-page`);
-        const nextPage = document.getElementById(`${view}-page`);
-    
-        if (!currentPage || !nextPage) return;
-    
-        const mainContent = document.querySelector('.main-content');
-        mainContent.style.overflow = 'hidden';
-    
-        let oldPageAnimation, newPageAnimation;
-        if (newIndex > oldIndex) {
-            oldPageAnimation = 'page-slide-out-to-left';
-            newPageAnimation = 'page-slide-in-from-right';
-        } else {
-            oldPageAnimation = 'page-slide-out-to-right';
-            newPageAnimation = 'page-slide-in-from-left';
+        if (!document.getElementById(`${view}-page`)) return;
+
+        const currentActivePage = document.querySelector('.page:not(.hidden)');
+        if (currentActivePage) {
+            currentActivePage.classList.add('hidden');
         }
-    
-        currentPage.classList.add('page-transition', oldPageAnimation);
-        nextPage.classList.remove('hidden');
-        nextPage.classList.add('page-transition', newPageAnimation);
-    
-        // Update navigation active state
+        
+        const newPage = document.getElementById(`${view}-page`);
+        newPage.classList.remove('hidden');
+        newPage.classList.add('page-transition');
+        
         document.querySelectorAll('.nav-link').forEach(link => {
             link.classList.remove('active');
             if (link.getAttribute('href') === `#${view}`) {
                 link.classList.add('active');
             }
         });
-    
+        
         this.currentView = view;
         localStorage.setItem('currentView', view);
-    
-        // Load content for the new view
+        
         switch (view) {
             case 'dashboard': this.loadDashboard(); break;
             case 'new-bon': this.loadNewBon(); break;
@@ -338,183 +248,110 @@ class IMENDITransApp {
             case 'stats': this.loadStatistics(); break;
             case 'settings': this.loadSettings(); break;
         }
-    
-        // Clean up animation classes
-        setTimeout(() => {
-            currentPage.classList.add('hidden');
-            currentPage.classList.remove('page-transition', oldPageAnimation);
-            nextPage.classList.remove('page-transition', newPageAnimation);
-            mainContent.style.overflow = '';
-        }, 400); // Must match animation duration
-    
+
         this.closeMobileMenu();
+        setTimeout(() => newPage.classList.remove('page-transition'), 400);
     }
-    
+
     toggleMobileMenu() {
+        const sidebar = document.getElementById('sidebar');
         const menuBtn = document.getElementById('mobile-menu-btn');
-        const menu = document.getElementById('mobile-menu');
-        const overlay = document.getElementById('menu-overlay');
-        const isOpen = menu.classList.contains('open');
-    
-        menuBtn.classList.toggle('open', !isOpen);
-        menu.classList.toggle('open', !isOpen);
-        overlay.classList.toggle('open', !isOpen);
-        menuBtn.setAttribute('aria-expanded', String(!isOpen));
-        
-        document.body.style.overflow = !isOpen ? 'hidden' : '';
+        const contentWrapper = document.getElementById('content-wrapper');
+        const isOpen = sidebar.classList.toggle('open');
+        menuBtn.classList.toggle('open');
+        menuBtn.setAttribute('aria-expanded', isOpen);
+        contentWrapper.classList.toggle('menu-open', isOpen);
     }
-    
+
     closeMobileMenu() {
-        const menuBtn = document.getElementById('mobile-menu-btn');
-        const menu = document.getElementById('mobile-menu');
-        const overlay = document.getElementById('menu-overlay');
-        
-        if (menu.classList.contains('open')) {
-            menuBtn.classList.remove('open');
-            menu.classList.remove('open');
-            overlay.classList.remove('open');
-            menuBtn.setAttribute('aria-expanded', 'false');
-            document.body.style.overflow = '';
+        const sidebar = document.getElementById('sidebar');
+        if (sidebar.classList.contains('open')) {
+            this.toggleMobileMenu();
         }
     }
 
     async handleLogout() {
-        localStorage.removeItem('access_token');
-        localStorage.removeItem('refresh_token');
-        localStorage.removeItem('currentView');
+        localStorage.clear();
         this.currentUser = null;
         this.showPage('auth-page');
     }
 
     showPage(pageId) {
-        document.querySelectorAll('#app > div').forEach(div => {
-            div.classList.add('hidden');
-        });
+        document.querySelectorAll('#app > div').forEach(div => div.classList.add('hidden'));
         document.getElementById(pageId).classList.remove('hidden');
     }
 
-    addLuggageItem() {
+    addLuggageItem(itemData = null) {
         const container = document.getElementById('luggage-container');
         const item = document.createElement('div');
         item.className = 'luggage-item';
         item.innerHTML = `
-            <input type="text" class="luggage-type" placeholder="Type d'article" required>
-            <input type="number" class="luggage-quantity" placeholder="Quantité" min="1" required>
-            <button type="button" class="remove-luggage btn btn-danger">Supprimer</button>
+            <input type="text" class="luggage-type" placeholder="Type d'article" required value="${itemData ? itemData.type : ''}">
+            <input type="number" class="luggage-quantity" placeholder="Quantité" min="1" required value="${itemData ? itemData.quantity : ''}">
+            <button type="button" class="remove-luggage btn btn-danger btn-icon" aria-label="Supprimer l'article">
+                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"></path></svg>
+            </button>
         `;
         container.appendChild(item);
-        
-        // Add event listener for quantity input
-        item.querySelector('.luggage-quantity').addEventListener('input', () => {
-            this.updateTotalColis();
-        });
-        
+        item.querySelector('.remove-luggage').addEventListener('click', () => { item.remove(); this.updateTotalColis(); });
+        item.querySelector('.luggage-quantity').addEventListener('input', () => this.updateTotalColis());
         this.updateTotalColis();
     }
 
     updateTotalColis() {
         let total = 0;
         document.querySelectorAll('.luggage-quantity').forEach(input => {
-            const value = parseInt(input.value) || 0;
-            total += value;
+            total += parseInt(input.value) || 0;
         });
         document.getElementById('total-colis').textContent = total;
     }
-
-    async handleSubmitBon(event) {
+    
+    handleBonFormSubmit(event) {
         event.preventDefault();
-        
-        const formData = this.getFormData();
-        const displayedId = formData.id;
-        let finalId = displayedId;
-        
-        // Online check: Re-fetch the absolute latest ID from the database to prevent race conditions
-        if (!this.offlineMode) {
-            const year = new Date().getFullYear();
-            let lastNumberFromDB = 0;
-            try {
-                const token = localStorage.getItem('access_token');
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/bons?id=like.BON-${year}-*&order=id.desc&limit=1`, {
-                    headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${token}` }
-                });
-                if (!response.ok) throw new Error('Failed to verify last bon number.');
-                
-                const result = await response.json();
-                if (result.length > 0) {
-                    lastNumberFromDB = parseInt(result[0].id.split('-')[2]);
-                }
-            } catch (error) {
-                console.error("Could not verify last bon number from DB.", error);
-                this.showMessage('Erreur réseau, impossible de vérifier le numéro du bon. Réessayez.', 'error');
-                return; // Stop submission
-            }
+        this.pendingBonData = this.getFormData();
+        const isEditing = !!document.getElementById('bon-id').dataset.editing;
+        const title = isEditing ? 'Confirmer la modification' : 'Confirmer la création';
+        const message = isEditing ? 'Voulez-vous vraiment enregistrer les modifications de ce bon ?' : 'Voulez-vous vraiment créer ce nouveau bon ?';
+        this.showConfirmationModal(title, message, () => this.saveBon());
+    }
 
-            const displayedNumber = parseInt(displayedId.split('-')[2]);
-            const expectedNextNumber = lastNumberFromDB > 0 ? lastNumberFromDB + 1 : 1000;
-
-            if (displayedNumber < expectedNextNumber) {
-                const newId = `BON-${year}-${expectedNextNumber.toString().padStart(4, '0')}`;
-                const userConfirmed = confirm(
-                    `Le numéro du bon a changé car un autre a été créé. Le nouveau numéro est : ${newId}.\n\nVoulez-vous enregistrer avec ce nouveau numéro ?`
-                );
-                
-                if (userConfirmed) {
-                    finalId = newId;
-                } else {
-                    await this.prepareNextBonId(); // Refresh UI with the correct next number
-                    return; // Cancel the save
-                }
-            }
-        }
-        
-        formData.id = finalId;
-        const finalNumber = parseInt(finalId.split('-')[2]);
+    async saveBon() {
+        this.showLoader();
+        const isEditing = !!document.getElementById('bon-id').dataset.editing;
+        const formData = this.pendingBonData;
 
         try {
-            let saved = false;
-            if (this.offlineMode) {
-                await this.storeOffline(formData);
-                saved = true;
-                this.showMessage('Bon sauvegardé localement. Synchronisation automatique...', 'success');
+            if (isEditing) {
+                const { id, ...updateData } = formData;
+                await this.updateSupabaseBon(id, updateData);
+                this.showMessage('Bon mis à jour avec succès !', 'success');
             } else {
-                const result = await this.submitToSupabase(formData);
-                if (result) {
-                    saved = true;
-                    this.showMessage('Bon enregistré avec succès !', 'success');
-                } else {
-                    // Assume network failure, save offline
-                    await this.storeOffline(formData);
-                    saved = true;
-                    this.showMessage('Erreur réseau. Sauvegardé localement...', 'warning');
-                }
-            }
-            
-            if (saved) {
-                // Only now do we "consume" the number by updating our local counters
-                this.lastGeneratedNumber = Math.max(this.lastGeneratedNumber, finalNumber);
-                localStorage.setItem('lastGeneratedNumber', this.lastGeneratedNumber.toString());
-                this.navigateTo('history');
-            }
+                const finalId = await this.getNextBonId();
+                formData.id = finalId;
 
+                if (this.offlineMode) {
+                    await this.storeOffline(formData);
+                    this.showMessage('Bon sauvegardé localement. Il sera synchronisé plus tard.', 'info');
+                } else {
+                    await this.submitToSupabase(formData);
+                    this.showMessage('Bon enregistré avec succès !', 'success');
+                }
+                 const finalNumber = parseInt(finalId.split('-')[2]);
+                 this.lastGeneratedNumber = Math.max(this.lastGeneratedNumber, finalNumber);
+                 localStorage.setItem('lastGeneratedNumber', this.lastGeneratedNumber.toString());
+            }
+            this.navigateTo('history');
         } catch (error) {
-            console.error('Error submitting bon:', error);
             this.showMessage(`Erreur lors de l'enregistrement: ${error.message}`, 'error');
+        } finally {
+            this.hideLoader();
+            this.pendingBonData = null;
         }
     }
 
-
     getFormData() {
-        const luggage = [];
-        document.querySelectorAll('.luggage-item').forEach(item => {
-            const type = item.querySelector('.luggage-type').value;
-            const quantity = parseInt(item.querySelector('.luggage-quantity').value);
-            if (type && quantity) {
-                luggage.push({ type, quantity });
-            }
-        });
-
         return {
-            id: document.getElementById('bon-id').value || document.getElementById('current-bon-id').textContent,
+            id: document.getElementById('bon-id').value,
             sender_first_name: document.getElementById('sender-first-name').value,
             sender_last_name: document.getElementById('sender-last-name').value,
             sender_phone: document.getElementById('sender-phone').value,
@@ -525,769 +362,518 @@ class IMENDITransApp {
             recipient_cin: document.getElementById('recipient-cin').value,
             origin: document.getElementById('origin').value,
             destination: document.getElementById('destination').value,
-            luggage: luggage,
+            luggage: Array.from(document.querySelectorAll('.luggage-item')).map(item => ({
+                type: item.querySelector('.luggage-type').value,
+                quantity: parseInt(item.querySelector('.luggage-quantity').value)
+            })).filter(i => i.type && i.quantity > 0),
             total: parseFloat(document.getElementById('total').value),
             paid: document.getElementById('paid').checked,
             user_id: this.currentUser.id
         };
     }
-
+    
     async initializeLastGeneratedNumber() {
         const year = new Date().getFullYear();
-        let lastKnownNumber = 0;
+        let lastKnownNumber = parseInt(localStorage.getItem('lastGeneratedNumber') || '0');
 
-        // 1. Get from localStorage (covers offline work across sessions)
-        const localLastNumber = parseInt(localStorage.getItem('lastGeneratedNumber') || '0');
-        lastKnownNumber = localLastNumber;
-
-        // 2. Try to get the most recent number from Supabase if online (across all users)
-        if (!this.offlineMode && this.currentUser) {
-            try {
-                const token = localStorage.getItem('access_token');
-                // Query for the absolute latest bon number in the current year
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/bons?id=like.BON-${year}-*&order=id.desc&limit=1`, {
-                    headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${token}` }
-                });
-
-                if (response.ok) {
-                    const result = await response.json();
-                    if (result.length > 0) {
-                        const lastId = result[0].id;
-                        const lastNumberFromDB = parseInt(lastId.split('-')[2]);
-                        // Use the highest number between local and DB
-                        lastKnownNumber = Math.max(lastKnownNumber, lastNumberFromDB);
-                    }
-                }
-            } catch (error) {
-                console.error("Could not fetch last bon number from DB, relying on local value.", error);
-            }
-        }
-        
-        this.lastGeneratedNumber = lastKnownNumber;
-        console.log(`Initialized lastGeneratedNumber to: ${this.lastGeneratedNumber}`);
-    }
-
-    async prepareNextBonId() {
-        const year = new Date().getFullYear();
-        const prefix = `BON-${year}-`;
-        const defaultStartNumber = 1000;
-        
-        let lastNumberFromDB = 0;
         if (!this.offlineMode) {
             try {
                 const token = localStorage.getItem('access_token');
-                // Query for the absolute latest bon number in the current year
                 const response = await fetch(`${SUPABASE_URL}/rest/v1/bons?id=like.BON-${year}-*&order=id.desc&limit=1`, {
                     headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${token}` }
                 });
-
                 if (response.ok) {
                     const result = await response.json();
                     if (result.length > 0) {
-                        lastNumberFromDB = parseInt(result[0].id.split('-')[2]);
+                        lastKnownNumber = Math.max(lastKnownNumber, parseInt(result[0].id.split('-')[2]));
                     }
                 }
             } catch (error) {
-                console.warn('Could not fetch last bon number from DB for display. Falling back to local.', error);
+                console.warn("Could not fetch last bon number from DB, relying on local value.", error);
             }
         }
-        
-        const lastNumberFromLocal = parseInt(localStorage.getItem('lastGeneratedNumber') || '0');
-        const baseNumber = Math.max(lastNumberFromDB, lastNumberFromLocal, this.lastGeneratedNumber);
-        const nextNum = Math.max(baseNumber + 1, defaultStartNumber);
-        
-        const id = `${prefix}${nextNum.toString().padStart(4, '0')}`;
-        
-        // Display it, but do not consume it
-        document.getElementById('current-bon-id').textContent = id;
-        document.getElementById('bon-id').value = id;
+        this.lastGeneratedNumber = lastKnownNumber;
     }
 
+    async getNextBonId() {
+        await this.initializeLastGeneratedNumber();
+        const year = new Date().getFullYear();
+        const nextNum = Math.max(this.lastGeneratedNumber + 1, 1000);
+        return `BON-${year}-${nextNum.toString().padStart(4, '0')}`;
+    }
+    
     async submitToSupabase(data) {
-        try {
-            const token = localStorage.getItem('access_token');
-            const response = await fetch(`${SUPABASE_URL}/rest/v1/bons`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'apikey': SUPABASE_ANON_KEY,
-                    'Authorization': `Bearer ${token}`,
-                    'Prefer': 'return=representation'
-                },
-                body: JSON.stringify(data)
-            });
+        const token = localStorage.getItem('access_token');
+        const response = await fetch(`${SUPABASE_URL}/rest/v1/bons`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${token}` },
+            body: JSON.stringify(data)
+        });
+        if (!response.ok) throw new Error('Échec de la soumission à la base de données.');
+    }
 
-            return response.ok;
-        } catch (error) {
-            console.error('Supabase error:', error);
-            return false;
-        }
+    async updateSupabaseBon(id, data) {
+        const token = localStorage.getItem('access_token');
+        const response = await fetch(`${SUPABASE_URL}/rest/v1/bons?id=eq.${id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${token}` },
+            body: JSON.stringify(data)
+        });
+        if (!response.ok) throw new Error('Échec de la mise à jour.');
     }
 
     async storeOffline(data) {
-        const transaction = this.db.transaction(['sync-queue'], 'readwrite');
-        const store = transaction.objectStore('sync-queue');
-        
-        await store.add({
-            type: 'bon',
-            data,
-            timestamp: Date.now()
-        });
-
-        // Register sync
+        const tx = this.db.transaction(['sync-queue'], 'readwrite');
+        await tx.objectStore('sync-queue').add({ type: 'bon', data, timestamp: Date.now() });
         if ('serviceWorker' in navigator && 'sync' in navigator.serviceWorker) {
-            const registration = await navigator.serviceWorker.ready;
-            await registration.sync.register('sync-bons');
+            navigator.serviceWorker.ready.then(reg => reg.sync.register('sync-bons'));
         }
     }
 
-    cancelBon() {
-        this.navigateTo('history');
-    }
+    cancelBon() { this.navigateTo('dashboard'); }
 
     async loadDashboard() {
-        // Load username from profiles table
-        const username = await this.getUsernameFromProfile();
-        document.getElementById('user-name').textContent = username || this.currentUser.email;
-        
-        // Load recent bons
+        this.showLoader();
         try {
+            const username = await this.getUsernameFromProfile();
+            document.getElementById('user-name').textContent = username || this.currentUser.email;
+
             const token = localStorage.getItem('access_token');
-            const response = await fetch(`${SUPABASE_URL}/rest/v1/bons?user_id=eq.${this.currentUser.id}&order=created_at.desc&limit=3`, {
-                headers: {
-                    'apikey': SUPABASE_ANON_KEY,
-                    'Authorization': `Bearer ${token}`
-                }
+            const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+            
+            const response = await fetch(`${SUPABASE_URL}/rest/v1/bons?user_id=eq.${this.currentUser.id}&created_at=gte.${thirtyDaysAgo}&order=created_at.desc`, {
+                headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${token}` }
             });
 
             if (response.ok) {
                 const bons = await response.json();
-                const container = document.getElementById('recent-bons');
                 
-                if (bons.length === 0) {
-                    container.innerHTML = '<p>Aucun bon récent</p>';
+                // Stats
+                const totalRevenue = bons.reduce((sum, bon) => sum + (bon.total || 0), 0);
+                document.getElementById('dashboard-bons-count').textContent = bons.length;
+                document.getElementById('dashboard-revenue').textContent = `${totalRevenue.toFixed(2)} €`;
+
+                // Recent bons
+                const container = document.getElementById('recent-bons-list');
+                const emptyState = container.querySelector('.empty-state');
+                const recentBons = bons.slice(0, 3);
+                
+                // Clear previous items but not the empty state div
+                container.querySelectorAll('.recent-bon-item').forEach(el => el.remove());
+
+                if (recentBons.length === 0) {
+                    emptyState.classList.remove('hidden');
                 } else {
-                    container.innerHTML = bons.map(bon => `
-                        <div class="recent-bon">
-                            <strong>${bon.id}</strong><br>
-                            <small>${bon.origin} → ${bon.destination}</small><br>
-                            <small>${bon.sender_first_name} ${bon.sender_last_name}</small>
-                        </div>
-                    `).join('');
+                    emptyState.classList.add('hidden');
+                    recentBons.forEach(bon => {
+                        const item = document.createElement('div');
+                        item.className = 'recent-bon-item';
+                        item.innerHTML = `
+                            <div>
+                                <strong>${bon.id}</strong>: ${bon.sender_first_name} à ${bon.recipient_first_name}<br>
+                                <small>${bon.origin} → ${bon.destination}</small>
+                            </div>
+                            <span class="status-badge ${bon.paid ? 'status-paid' : 'status-unpaid'}">${bon.paid ? 'Payé' : 'Non Payé'}</span>
+                        `;
+                        container.appendChild(item);
+                    });
                 }
             }
         } catch (error) {
-            console.error('Error loading dashboard:', error);
+            this.showMessage('Erreur lors du chargement du dashboard', 'error');
+        } finally {
+            this.hideLoader();
         }
     }
-
+    
     async loadNewBon(bon = null) {
-        // Reset form
         document.getElementById('bon-form').reset();
-        document.getElementById('bon-id').value = '';
-        document.getElementById('paid').checked = false;
-
-        // Clear luggage items except first one
-        const container = document.getElementById('luggage-container');
-        while (container.children.length > 1) {
-            container.removeChild(container.lastChild);
-        }
+        document.getElementById('luggage-container').innerHTML = '';
+        document.getElementById('bon-id').dataset.editing = bon ? 'true' : 'false';
 
         if (bon) {
-            // Editing existing bon
             document.getElementById('bon-form-title').textContent = 'Modifier le Bon';
             document.getElementById('current-bon-id').textContent = bon.id;
             document.getElementById('bon-id').value = bon.id;
-            document.getElementById('sender-first-name').value = bon.sender_first_name;
-            document.getElementById('sender-last-name').value = bon.sender_last_name;
-            document.getElementById('sender-phone').value = bon.sender_phone;
-            document.getElementById('sender-cin').value = bon.sender_cin;
-            document.getElementById('recipient-first-name').value = bon.recipient_first_name;
-            document.getElementById('recipient-last-name').value = bon.recipient_last_name;
-            document.getElementById('recipient-phone').value = bon.recipient_phone;
-            document.getElementById('recipient-cin').value = bon.recipient_cin;
-            document.getElementById('origin').value = bon.origin;
-            document.getElementById('destination').value = bon.destination;
-            document.getElementById('total').value = bon.total;
-            document.getElementById('paid').checked = bon.paid;
-
-            // Load luggage items
-            const firstItem = container.querySelector('.luggage-item');
-            if (firstItem) {
-                const luggage = bon.luggage;
-                if (luggage && luggage.length > 0) {
-                    firstItem.querySelector('.luggage-type').value = luggage[0].type;
-                    firstItem.querySelector('.luggage-quantity').value = luggage[0].quantity;
-                    
-                    for (let i = 1; i < luggage.length; i++) {
-                        this.addLuggageItem();
-                        const newItem = container.lastChild;
-                        newItem.querySelector('.luggage-type').value = luggage[i].type;
-                        newItem.querySelector('.luggage-quantity').value = luggage[i].quantity;
-                    }
+            Object.keys(bon).forEach(key => {
+                const elId = key.replace(/_/g, '-');
+                const el = document.getElementById(elId);
+                if (el) {
+                    if (el.type === 'checkbox') el.checked = bon[key];
+                    else el.value = bon[key];
                 }
-            }
+            });
+            (bon.luggage || []).forEach(item => this.addLuggageItem(item));
         } else {
-            // Creating new bon - show the potential next ID without consuming it
             document.getElementById('bon-form-title').textContent = 'Nouveau Bon';
-            await this.prepareNextBonId();
+            const nextId = await this.getNextBonId();
+            document.getElementById('current-bon-id').textContent = nextId;
+            document.getElementById('bon-id').value = nextId;
+            this.addLuggageItem();
         }
-
-        // Update total colis
         this.updateTotalColis();
     }
 
     async loadHistory() {
+        this.showLoader();
         try {
             const token = localStorage.getItem('access_token');
             const response = await fetch(`${SUPABASE_URL}/rest/v1/bons?user_id=eq.${this.currentUser.id}&order=created_at.desc`, {
-                headers: {
-                    'apikey': SUPABASE_ANON_KEY,
-                    'Authorization': `Bearer ${token}`
-                }
+                headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${token}` }
             });
-
             if (response.ok) {
                 const bons = await response.json();
                 this.displayHistory(bons);
-            }
+                document.getElementById('history-empty-state').classList.toggle('hidden', bons.length > 0);
+            } else { throw new Error("Failed to fetch history"); }
         } catch (error) {
-            console.error('Error loading history:', error);
+            this.showMessage('Erreur lors du chargement de l\'historique', 'error');
+        } finally {
+            this.hideLoader();
         }
     }
 
     displayHistory(bons) {
         const tbody = document.getElementById('history-table-body');
-        tbody.innerHTML = '';
-
-        bons.forEach(bon => {
-            const row = document.createElement('tr');
-            row.innerHTML = `
+        tbody.innerHTML = bons.map(bon => `
+            <tr>
                 <td>${bon.id}</td>
                 <td>${bon.sender_first_name} ${bon.sender_last_name}</td>
                 <td>${bon.recipient_first_name} ${bon.recipient_last_name}</td>
-                <td>${bon.origin}</td>
-                <td>${bon.destination}</td>
+                <td>${bon.origin} → ${bon.destination}</td>
                 <td>${new Date(bon.created_at).toLocaleDateString()}</td>
-                <td>${bon.total} €</td>
-                <td>${bon.paid ? 'Oui' : 'Non'}</td>
-                <td>
-                    <button class="btn btn-secondary btn-small edit-btn" data-id="${bon.id}">Modifier</button>
-                    <button class="btn btn-info btn-small share-btn" data-id="${bon.id}">Partager</button>
-                    <button class="btn btn-success btn-small export-btn" data-id="${bon.id}">PDF</button>
+                <td>${bon.total.toFixed(2)} €</td>
+                <td><span class="status-badge ${bon.paid ? 'status-paid' : 'status-unpaid'}">${bon.paid ? 'Payé' : 'Non Payé'}</span></td>
+                <td class="actions-cell">
+                    <button class="btn btn-secondary btn-icon edit-btn" data-id='${JSON.stringify(bon)}' aria-label="Modifier">
+                       <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34a.9959.9959 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"></path></svg>
+                    </button>
+                    <button class="btn btn-secondary btn-icon share-btn" data-id="${bon.id}" aria-label="Partager">
+                       <svg viewBox="0 0 24 24" fill="currentColor"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92 1.61 0 2.92-1.31 2.92-2.92s-1.31-2.92-2.92-2.92z"></path></svg>
+                    </button>
+                    <button class="btn btn-secondary btn-icon print-btn" data-id="${bon.id}" aria-label="Imprimer le PDF">
+                       <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 8H5c-1.66 0-3 1.34-3 3v6h4v4h12v-4h4v-6c0-1.66-1.34-3-3-3zm-3 11H8v-5h8v5zm3-7c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm-1-9H6v4h12V3z"></path></svg>
+                    </button>
                 </td>
-            `;
-            tbody.appendChild(row);
-        });
+            </tr>`).join('');
 
-        // Add event listeners to action buttons
-        document.querySelectorAll('.edit-btn').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                const id = e.target.dataset.id;
-                this.editBon(id);
-            });
-        });
-
-        document.querySelectorAll('.share-btn').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                const id = e.target.dataset.id;
-                this.shareBon(id);
-            });
-        });
-
-        document.querySelectorAll('.export-btn').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                const id = e.target.dataset.id;
-                this.exportPDF(id);
-            });
-        });
+        tbody.querySelectorAll('.edit-btn').forEach(btn => btn.addEventListener('click', (e) => {
+            const bonData = JSON.parse(e.currentTarget.dataset.id);
+            this.navigateTo('new-bon');
+            this.loadNewBon(bonData);
+        }));
+        tbody.querySelectorAll('.share-btn').forEach(btn => btn.addEventListener('click', (e) => this.shareBon(e.currentTarget.dataset.id)));
+        tbody.querySelectorAll('.print-btn').forEach(btn => btn.addEventListener('click', (e) => this.exportPDF(e.currentTarget.dataset.id)));
     }
 
-    async editBon(id) {
+    async loadStatistics() {
+        this.showLoader();
         try {
             const token = localStorage.getItem('access_token');
-            const response = await fetch(`${SUPABASE_URL}/rest/v1/bons?id=eq.${id}&user_id=eq.${this.currentUser.id}`, {
-                headers: {
-                    'apikey': SUPABASE_ANON_KEY,
-                    'Authorization': `Bearer ${token}`
-                }
-            });
-
-            if (response.ok) {
-                const bon = await response.json();
-                this.navigateTo('new-bon');
-                this.loadNewBon(bon[0]);
-            }
-        } catch (error) {
-            console.error('Error loading bon for edit:', error);
-        }
-    }
-
-    async shareBon(id) {
-        try {
-            const token = localStorage.getItem('access_token');
-            const response = await fetch(`${SUPABASE_URL}/rest/v1/bons?id=eq.${id}&user_id=eq.${this.currentUser.id}`, {
-                headers: {
-                    'apikey': SUPABASE_ANON_KEY,
-                    'Authorization': `Bearer ${token}`
-                }
-            });
-
-            if (response.ok) {
-                const bon = await response.json();
-                
-                // Create a temporary element to generate the content
-                const tempDiv = document.createElement('div');
-                tempDiv.style.display = 'none';
-                tempDiv.innerHTML = `
-                    <div style="padding: 20px; font-family: Arial, sans-serif;">
-                        <h2>Bon d'expédition</h2>
-                        <p><strong>ID:</strong> ${bon[0].id}</p>
-                        <p><strong>Date:</strong> ${new Date(bon[0].created_at).toLocaleDateString()}</p>
-                        <h3>Expéditeur:</h3>
-                        <p>${bon[0].sender_first_name} ${bon[0].sender_last_name}</p>
-                        <p>Téléphone: ${bon[0].sender_phone}</p>
-                        <p>CIN: ${bon[0].sender_cin}</p>
-                        <h3>Destinataire:</h3>
-                        <p>${bon[0].recipient_first_name} ${bon[0].recipient_last_name}</p>
-                        <p>Téléphone: ${bon[0].recipient_phone}</p>
-                        <p>CIN: ${bon[0].recipient_cin}</p>
-                        <h3>Itinéraire:</h3>
-                        <p>${bon[0].origin} → ${bon[0].destination}</p>
-                        <h3>Bagages:</h3>
-                        ${bon[0].luggage.map(item => `<p>${item.type}: ${item.quantity}</p>`).join('')}
-                        <p><strong>Total des colis:</strong> ${bon[0].luggage.reduce((total, item) => total + item.quantity, 0)}</p>
-                        <p><strong>Total:</strong> ${bon[0].total} €</p>
-                        <p><strong>Payé:</strong> ${bon[0].paid ? 'Oui' : 'Non'}</p>
-                    </div>
-                `;
-                document.body.appendChild(tempDiv);
-                
-                const canvas = await html2canvas(tempDiv);
-                const image = canvas.toDataURL('image/png');
-                
-                // Create blob from data URL
-                const byteString = atob(image.split(',')[1]);
-                const mimeString = image.split(',')[0].split(':')[1].split(';')[0];
-                const ab = new ArrayBuffer(byteString.length);
-                const ia = new Uint8Array(ab);
-                for (let i = 0; i < byteString.length; i++) {
-                    ia[i] = byteString.charCodeAt(i);
-                }
-                const blob = new Blob([ab], { type: mimeString });
-                
-                if (navigator.share) {
-                    await navigator.share({
-                        title: `Bon d'expédition ${bon[0].id}`,
-                        text: `Bon d'expédition pour ${bon[0].recipient_first_name} ${bon[0].recipient_last_name}`,
-                        files: [new File([blob], 'bon.png', { type: 'image/png' })]
-                    });
-                } else {
-                    // Fallback: download image
-                    const link = document.createElement('a');
-                    link.href = image;
-                    link.download = `bon_${id}.png`;
-                    link.click();
-                }
-                
-                // Clean up
-                document.body.removeChild(tempDiv);
-            }
-        } catch (error) {
-            console.error('Error sharing bon:', error);
-        }
-    }
-
-    sanitizeForPDF(text) {
-        if (!text) return '';
-        // Keeps letters (including common accented ones), numbers, spaces, and basic punctuation.
-        // Removes other symbols that might not be supported by the PDF font.
-        return text.toString().replace(/[^A-Za-z0-9_\s\-.,\u00C0-\u017F]/g, '');
-    }
-
-    async exportPDF(id) {
-        try {
-            const token = localStorage.getItem('access_token');
-            const response = await fetch(`${SUPABASE_URL}/rest/v1/bons?id=eq.${id}&user_id=eq.${this.currentUser.id}`, {
-                headers: {
-                    'apikey': SUPABASE_ANON_KEY,
-                    'Authorization': `Bearer ${token}`
-                }
-            });
-    
-            if (!response.ok) throw new Error('Failed to fetch bon data.');
-    
-            const bonData = await response.json();
-            const bon = bonData[0];
-            if (!bon) throw new Error('Bon not found.');
-    
-            const { jsPDF } = window.jspdf;
-            const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-    
-            // Fetch and add logo
-            try {
-                const imgResponse = await fetch('images/image300v2.png');
-                const blob = await imgResponse.blob();
-                const reader = new FileReader();
-                const dataUrl = await new Promise((resolve, reject) => {
-                    reader.onload = () => resolve(reader.result);
-                    reader.onerror = reject;
-                    reader.readAsDataURL(blob);
-                });
-                // Adjust width and height as needed, maintaining aspect ratio. 
-                // Assuming original is 300x100, let's use 45x15mm.
-                doc.addImage(dataUrl, 'PNG', 20, 15, 45, 15);
-            } catch (e) {
-                console.error("Could not add logo to PDF:", e);
-                // Fallback to text if logo fails
-                doc.setFont('helvetica', 'bold');
-                doc.setFontSize(16);
-                doc.text('IMENDI TRANS', 20, 20);
-            }
-    
-            doc.setFont('helvetica', 'normal');
-            doc.setFontSize(10);
-            doc.setTextColor(0, 0, 0);
-    
-            doc.setFontSize(12);
-            doc.text(bon.id, 150, 20);
-            doc.setFontSize(10);
-            doc.text(`Date: ${new Date(bon.created_at).toLocaleDateString('fr-FR')}`, 150, 25);
-    
-            doc.setDrawColor(30, 58, 138);
-            doc.line(20, 35, 190, 35); // Adjusted Y position
-    
-            // Sender & Recipient details
-            let yPos = 45;
-            doc.setFont('helvetica', 'bold');
-            doc.setFontSize(10);
-            doc.setTextColor(30, 58, 138);
-            doc.text('Expéditeur', 25, yPos);
-            doc.text('Destinataire', 110, yPos);
-    
-            doc.setFont('helvetica', 'normal');
-            doc.setFontSize(9);
-            doc.setTextColor(0, 0, 0);
-            doc.text(`Nom: ${bon.sender_first_name} ${bon.sender_last_name}`, 25, yPos + 5);
-            doc.text(`Téléphone: ${bon.sender_phone}`, 25, yPos + 10);
-            doc.text(`CIN: ${bon.sender_cin}`, 25, yPos + 15);
-    
-            doc.text(`Nom: ${bon.recipient_first_name} ${bon.recipient_last_name}`, 110, yPos + 5);
-            doc.text(`Téléphone: ${bon.recipient_phone}`, 110, yPos + 10);
-            doc.text(`CIN: ${bon.recipient_cin}`, 110, yPos + 15);
-    
-            yPos += 25;
-            doc.setFont('helvetica', 'bold');
-            doc.setFontSize(10);
-            doc.setTextColor(0, 0, 0);
-            doc.text('Trajet:', 25, yPos);
-            doc.setFont('helvetica', 'normal');
-            doc.setFontSize(9);
-            doc.text(`${this.sanitizeForPDF(bon.origin)} - ${this.sanitizeForPDF(bon.destination)}`, 45, yPos);
-    
-            yPos += 10;
-            doc.setFont('helvetica', 'bold');
-            doc.setFontSize(10);
-            doc.setTextColor(30, 58, 138);
-            doc.text('Détails des Bagages', 25, yPos);
-    
-            yPos += 5;
-            doc.setFont('helvetica', 'bold');
-            doc.setFontSize(9);
-            doc.setTextColor(0, 0, 0);
-            doc.rect(25, yPos, 80, 7);
-            doc.rect(105, yPos, 80, 7);
-            doc.text('Article', 28, yPos + 5);
-            doc.text('Quantité', 108, yPos + 5);
-    
-            yPos += 7;
-            doc.setFont('helvetica', 'normal');
-            bon.luggage.forEach(item => {
-                doc.rect(25, yPos, 80, 7);
-                doc.rect(105, yPos, 80, 7);
-                doc.text(this.sanitizeForPDF(item.type), 28, yPos + 5);
-                doc.text(String(item.quantity), 108, yPos + 5);
-                yPos += 7;
-            });
-    
-            yPos += 10;
-            doc.setFont('helvetica', 'bold');
-            doc.setFontSize(10);
-            doc.text('Statut:', 25, yPos);
-            doc.text(bon.paid ? 'Payé' : 'Non Payé', 45, yPos, { textColor: bon.paid ? [0, 153, 51] : [255, 0, 0] });
-    
-            doc.text(`Total: ${bon.total.toFixed(2)} €`, 150, yPos);
-    
-            doc.save(`bon_${id}.pdf`);
-    
-        } catch (error) {
-            console.error('Error exporting PDF:', error);
-            this.showMessage('Erreur lors de la génération du PDF', 'error');
-        }
-    }
-
-    async loadStatistics(startDate = null, endDate = null) {
-        try {
-            const token = localStorage.getItem('access_token');
+            const startDate = document.getElementById('start-date').value;
+            const endDate = document.getElementById('end-date').value;
             let url = `${SUPABASE_URL}/rest/v1/bons?user_id=eq.${this.currentUser.id}`;
-            
-            if (startDate && endDate) {
-                url += `&created_at=gte.${startDate}T00:00:00&created_at=lte.${endDate}T23:59:59`;
-            }
+            if (startDate && endDate) url += `&created_at=gte.${startDate}T00:00:00&created_at=lte.${endDate}T23:59:59`;
 
-            const response = await fetch(url, {
-                headers: {
-                    'apikey': SUPABASE_ANON_KEY,
-                    'Authorization': `Bearer ${token}`
-                }
-            });
-
+            const response = await fetch(url, { headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${token}` }});
             if (response.ok) {
                 const bons = await response.json();
-                
-                let totalRevenue = 0;
-                let paidAmount = 0;
-                let unpaidAmount = 0;
-                let paidCount = 0;
-                let unpaidCount = 0;
+                const totals = bons.reduce((acc, bon) => {
+                    const total = parseFloat(bon.total) || 0;
+                    acc.totalRevenue += total;
+                    if (bon.paid) { acc.paidAmount += total; acc.paidCount++; }
+                    else { acc.unpaidAmount += total; acc.unpaidCount++; }
+                    return acc;
+                }, { totalRevenue: 0, paidAmount: 0, unpaidAmount: 0, paidCount: 0, unpaidCount: 0 });
 
-                bons.forEach(bon => {
-                    totalRevenue += parseFloat(bon.total) || 0;
-                    if (bon.paid) {
-                        paidAmount += parseFloat(bon.total) || 0;
-                        paidCount++;
-                    } else {
-                        unpaidAmount += parseFloat(bon.total) || 0;
-                        unpaidCount++;
-                    }
+                document.getElementById('total-revenue').textContent = `${totals.totalRevenue.toFixed(2)} €`;
+                document.getElementById('paid-amount').textContent = `${totals.paidAmount.toFixed(2)} €`;
+                document.getElementById('paid-count').textContent = `${totals.paidCount} bons`;
+                document.getElementById('unpaid-amount').textContent = `${totals.unpaidAmount.toFixed(2)} €`;
+                document.getElementById('unpaid-count').textContent = `${totals.unpaidCount} bons`;
+            }
+        } catch (error) {
+            this.showMessage('Erreur lors du chargement des statistiques', 'error');
+        } finally {
+            this.hideLoader();
+        }
+    }
+    
+    async loadSettings() {
+        this.showLoader();
+        try {
+            const username = await this.getUsernameFromProfile();
+            document.getElementById('username-setting').value = username || '';
+            
+            const themeToggle = document.getElementById('theme-toggle');
+            if (!themeToggle.dataset.listener) {
+                themeToggle.addEventListener('click', () => {
+                    let newTheme = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+                    document.documentElement.setAttribute('data-theme', newTheme);
+                    localStorage.setItem('theme', newTheme);
                 });
-
-                document.getElementById('total-revenue').textContent = `${totalRevenue.toFixed(2)} €`;
-                document.getElementById('paid-amount').textContent = `${paidAmount.toFixed(2)} €`;
-                document.getElementById('paid-count').textContent = `${paidCount} bons`;
-                document.getElementById('unpaid-amount').textContent = `${unpaidAmount.toFixed(2)} €`;
-                document.getElementById('unpaid-count').textContent = `${unpaidCount} bons`;
+                themeToggle.dataset.listener = true;
             }
+
         } catch (error) {
-            console.error('Error loading statistics:', error);
+            this.showMessage("Erreur de chargement du profil", "error");
+        } finally {
+            this.hideLoader();
         }
     }
-
-    loadSettings() {
-        this.loadUsernameFromProfile();
-    }
-
-    async loadUsernameFromProfile() {
-        try {
-            const token = localStorage.getItem('access_token');
-            const response = await fetch(`${SUPABASE_URL}/rest/v1/profiles?id=eq.${this.currentUser.id}`, {
-                headers: {
-                    'apikey': SUPABASE_ANON_KEY,
-                    'Authorization': `Bearer ${token}`
-                }
-            });
-
-            if (response.ok) {
-                const profiles = await response.json();
-                if (profiles.length > 0) {
-                    document.getElementById('username-setting').value = profiles[0].username || '';
-                }
-            }
-        } catch (error) {
-            console.error('Error loading username:', error);
-        }
-    }
-
+    
     async getUsernameFromProfile() {
-        try {
-            const token = localStorage.getItem('access_token');
-            const response = await fetch(`${SUPABASE_URL}/rest/v1/profiles?id=eq.${this.currentUser.id}`, {
-                headers: {
-                    'apikey': SUPABASE_ANON_KEY,
-                    'Authorization': `Bearer ${token}`
-                }
-            });
-
-            if (response.ok) {
-                const profiles = await response.json();
-                if (profiles.length > 0) {
-                    return profiles[0].username;
-                }
-            }
-        } catch (error) {
-            console.error('Error getting username:', error);
-        }
-        return null;
+        const token = localStorage.getItem('access_token');
+        const response = await fetch(`${SUPABASE_URL}/rest/v1/profiles?id=eq.${this.currentUser.id}&select=username`, {
+            headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${token}` }
+        });
+        if (!response.ok) return null;
+        const profiles = await response.json();
+        return profiles.length > 0 ? profiles[0].username : null;
     }
 
     async saveUsername() {
         const username = document.getElementById('username-setting').value.trim();
-        if (username) {
-            try {
-                const token = localStorage.getItem('access_token');
-                
-                // Check if profile exists
-                const checkResponse = await fetch(`${SUPABASE_URL}/rest/v1/profiles?id=eq.${this.currentUser.id}`, {
-                    headers: {
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${token}`
-                    }
-                });
-
-                if (checkResponse.ok) {
-                    const profiles = await checkResponse.json();
-                    
-                    if (profiles.length > 0) {
-                        // Update existing profile
-                        const updateResponse = await fetch(`${SUPABASE_URL}/rest/v1/profiles?id=eq.${this.currentUser.id}`, {
-                            method: 'PATCH',
-                            headers: {
-                                'Content-Type': 'application/json',
-                                'apikey': SUPABASE_ANON_KEY,
-                                'Authorization': `Bearer ${token}`,
-                                'Prefer': 'return=representation'
-                            },
-                            body: JSON.stringify({ username: username })
-                        });
-
-                        if (updateResponse.ok) {
-                            // Update current user data
-                            // Update dashboard username
-                            document.getElementById('user-name').textContent = username;
-                            this.showMessage('Nom d\'utilisateur sauvegardé', 'success');
-                        } else {
-                            this.showMessage('Erreur lors de la sauvegarde', 'error');
-                        }
-                    } else {
-                        // Create new profile
-                        const createResponse = await fetch(`${SUPABASE_URL}/rest/v1/profiles`, {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                                'apikey': SUPABASE_ANON_KEY,
-                                'Authorization': `Bearer ${token}`,
-                                'Prefer': 'return=representation'
-                            },
-                            body: JSON.stringify({ 
-                                id: this.currentUser.id,
-                                username: username,
-                                full_name: username
-                            })
-                        });
-
-                        if (createResponse.ok) {
-                            // Update dashboard username
-                            document.getElementById('user-name').textContent = username;
-                            this.showMessage('Nom d\'utilisateur sauvegardé', 'success');
-                        } else {
-                            this.showMessage('Erreur lors de la sauvegarde', 'error');
-                        }
-                    }
-                }
-            } catch (error) {
-                console.error('Error updating username:', error);
-                this.showMessage('Erreur de connexion', 'error');
-            }
-        } else {
-            this.showMessage('Veuillez entrer un nom d\'utilisateur valide', 'error');
+        if (!username) { this.showMessage('Le nom d\'utilisateur ne peut pas être vide', 'warning'); return; }
+        this.showLoader();
+        try {
+            const token = localStorage.getItem('access_token');
+            const response = await fetch(`${SUPABASE_URL}/rest/v1/profiles?id=eq.${this.currentUser.id}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${token}`},
+                body: JSON.stringify({ username: username })
+            });
+            if (!response.ok) throw new Error("Update failed");
+            document.getElementById('user-name').textContent = username;
+            this.showMessage('Nom d\'utilisateur sauvegardé', 'success');
+        } catch (error) {
+            this.showMessage('Erreur lors de la sauvegarde', 'error');
+        } finally {
+            this.hideLoader();
         }
     }
 
     searchBons(query) {
-        if (!query.trim()) {
-            this.loadHistory();
-            return;
-        }
-
-        // This would be implemented with a more complex search in a real app
-        // For now, we'll just filter the existing history
-        const rows = document.querySelectorAll('#history-table-body tr');
-        rows.forEach(row => {
-            const text = row.textContent.toLowerCase();
-            if (text.includes(query.toLowerCase())) {
-                row.style.display = '';
-            } else {
-                row.style.display = 'none';
-            }
+        document.querySelectorAll('#history-table-body tr').forEach(row => {
+            row.style.display = row.textContent.toLowerCase().includes(query.toLowerCase()) ? '' : 'none';
         });
     }
 
-    handleOnline() {
-        this.offlineMode = false;
-        this.updateOfflineBanner();
-        
-        // Try to sync offline data
-        this.syncOfflineData();
-    }
-
-    handleOffline() {
-        this.offlineMode = true;
-        this.updateOfflineBanner();
-    }
+    handleOnline() { this.offlineMode = false; this.updateOfflineBanner(); this.syncOfflineData(); }
+    handleOffline() { this.offlineMode = true; this.updateOfflineBanner(); }
 
     updateOfflineBanner() {
-        const banner = document.getElementById('offline-banner');
-        if (this.offlineMode) {
-            banner.classList.remove('hidden');
-        } else {
-            banner.classList.add('hidden');
-        }
+        document.getElementById('offline-banner').classList.toggle('hidden', !this.offlineMode);
     }
 
     async syncOfflineData() {
         if ('serviceWorker' in navigator && 'sync' in navigator.serviceWorker) {
-            const registration = await navigator.serviceWorker.ready;
-            await registration.sync.register('sync-bons');
+            navigator.serviceWorker.ready.then(reg => reg.sync.register('sync-bons'));
         }
+    }
+    
+    showConfirmationModal(title, message, onConfirm) {
+        document.getElementById('modal-title').textContent = title;
+        document.getElementById('modal-message').textContent = message;
+        this.onConfirm = onConfirm;
+        document.getElementById('confirmation-modal').classList.remove('hidden');
+    }
+    
+    hideConfirmationModal() {
+        document.getElementById('confirmation-modal').classList.add('hidden');
+        this.onConfirm = null;
+        this.pendingBonData = null;
+    }
+    
+    confirmModalAction() {
+        if (this.onConfirm) {
+            this.onConfirm();
+        }
+        this.hideConfirmationModal();
     }
 
     showMessage(message, type = 'info') {
-        // Create a temporary message element
-        const messageEl = document.createElement('div');
-        messageEl.className = `message ${type}`;
-        messageEl.textContent = message;
-        messageEl.style.position = 'fixed';
-        messageEl.style.top = '20px';
-        messageEl.style.right = '20px';
-        messageEl.style.padding = '10px 20px';
-        messageEl.style.borderRadius = '4px';
-        messageEl.style.zIndex = '1000';
-        
-        switch (type) {
-            case 'success':
-                messageEl.style.backgroundColor = '#d4edda';
-                messageEl.style.color = '#155724';
-                break;
-            case 'error':
-                messageEl.style.backgroundColor = '#f8d7da';
-                messageEl.style.color = '#721c24';
-                break;
-            case 'warning':
-                messageEl.style.backgroundColor = '#fff3cd';
-                messageEl.style.color = '#856404';
-                break;
-            default:
-                messageEl.style.backgroundColor = '#d1ecf1';
-                messageEl.style.color = '#0c5460';
-        }
+        const container = document.getElementById('toast-container');
+        const toast = document.createElement('div');
+        toast.className = `toast ${type}`;
+        toast.textContent = message;
+        container.appendChild(toast);
+        setTimeout(() => toast.remove(), 4000);
+    }
 
-        document.body.appendChild(messageEl);
-        
-        setTimeout(() => {
-            messageEl.remove();
-        }, 3000);
+    showLoader() { document.getElementById('loader-overlay').classList.remove('hidden'); }
+    hideLoader() { document.getElementById('loader-overlay').classList.add('hidden'); }
+    
+    async shareBon(id) {
+        this.showLoader();
+        try {
+            const token = localStorage.getItem('access_token');
+            const response = await fetch(`${SUPABASE_URL}/rest/v1/bons?id=eq.${id}`, { headers: {'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${token}`}});
+            if (!response.ok) throw new Error("Bon not found");
+            const bon = (await response.json())[0];
+            
+            const shareText = `Bon d'expédition ${bon.id}\nExpéditeur: ${bon.sender_first_name}\nDestinataire: ${bon.recipient_first_name}\nTrajet: ${bon.origin} -> ${bon.destination}`;
+            
+            if (navigator.share) {
+                await navigator.share({ title: `Bon d'expédition ${id}`, text: shareText });
+            } else {
+                this.showMessage('Partage non supporté sur ce navigateur.', 'info');
+            }
+        } catch (error) {
+            this.showMessage('Erreur lors du partage.', 'error');
+        } finally {
+            this.hideLoader();
+        }
+    }
+    async exportPDF(id) {
+        this.showLoader();
+        try {
+            const token = localStorage.getItem('access_token');
+            const response = await fetch(`${SUPABASE_URL}/rest/v1/bons?id=eq.${id}`, { headers: {'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${token}`}});
+            if (!response.ok) throw new Error('Failed to fetch bon data.');
+            const bon = (await response.json())[0];
+    
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' });
+            
+            // --- Define constants ---
+            const themeColor = [30, 58, 138];
+            const textColor = [31, 41, 55];
+            const whiteColor = [255, 255, 255];
+            const greenColor = [34, 197, 94];
+            const redColor = [239, 68, 68];
+            const pageMargin = 20;
+            const pageWidth = doc.internal.pageSize.getWidth();
+            const pageHeight = doc.internal.pageSize.getHeight();
+            let yPos = 0;
+
+            // --- Header ---
+            doc.setFillColor(...themeColor);
+            doc.rect(0, 0, pageWidth, 35, 'F'); // Filled rectangle for header background
+
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(18);
+            doc.setTextColor(...whiteColor);
+            doc.text('BON D\'EXPÉDITION IMENDI TRANS', pageWidth / 2, 18, { align: 'center' });
+
+            doc.setFontSize(10);
+            doc.text(`Numéro: ${bon.id}`, pageWidth / 2, 26, { align: 'center' });
+            
+            yPos = 45; // Start content below header
+
+            // --- Date ---
+            doc.setFont('helvetica', 'normal');
+            doc.setFontSize(10);
+            doc.setTextColor(...textColor);
+            doc.text(`Date d'émission: ${new Date(bon.created_at).toLocaleDateString('fr-FR')}`, pageWidth - pageMargin, yPos, { align: 'right' });
+            yPos += 10;
+
+            // --- Sender & Recipient side-by-side ---
+            const col1X = pageMargin;
+            const col2X = pageWidth / 2 + 5;
+            let initialY = yPos;
+
+            const drawClientDetails = (title, clientData, x, y) => {
+                let currentY = y;
+                doc.setFont('helvetica', 'bold');
+                doc.setFontSize(12);
+                doc.setTextColor(...themeColor);
+                doc.text(title, x, currentY);
+                currentY += 7;
+
+                doc.setFontSize(10);
+                doc.setTextColor(...textColor);
+
+                const printDetail = (label, value) => {
+                    doc.setFont('helvetica', 'normal');
+                    doc.text(`${label}:`, x, currentY);
+                    doc.setFont('helvetica', 'bold');
+                    doc.text(value || 'N/A', x + 15, currentY);
+                    currentY += 6;
+                };
+
+                printDetail('Nom', `${clientData.first_name || ''} ${clientData.last_name || ''}`.trim());
+                printDetail('Tél', clientData.phone);
+                printDetail('CIN', clientData.cin);
+                
+                return currentY;
+            };
+
+            const senderData = { first_name: bon.sender_first_name, last_name: bon.sender_last_name, phone: bon.sender_phone, cin: bon.sender_cin };
+            const recipientData = { first_name: bon.recipient_first_name, last_name: bon.recipient_last_name, phone: bon.recipient_phone, cin: bon.recipient_cin };
+
+            const finalY1 = drawClientDetails('Expéditeur', senderData, col1X, initialY);
+            const finalY2 = drawClientDetails('Destinataire', recipientData, col2X, initialY);
+            
+            yPos = Math.max(finalY1, finalY2) + 5;
+
+            // --- Shipping Details ---
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(12);
+            doc.setTextColor(...themeColor);
+            doc.text("Détails de l'expédition", pageMargin, yPos);
+            yPos += 7;
+
+            doc.setFont('helvetica', 'normal');
+            doc.setFontSize(10);
+            doc.setTextColor(...textColor);
+
+            const printShippingDetail = (label, value) => {
+                doc.setFont('helvetica', 'normal');
+                doc.text(`${label}:`, pageMargin, yPos);
+                doc.setFont('helvetica', 'bold');
+                doc.text(value || 'N/A', pageMargin + 40, yPos);
+                yPos += 6;
+            };
+
+            printShippingDetail("Ville d'expédition", bon.origin);
+            printShippingDetail("Ville de destination", bon.destination);
+            
+            yPos += 10;
+
+            // --- Luggage Table ---
+            doc.autoTable({
+                startY: yPos,
+                head: [['Article', 'Quantité']],
+                body: bon.luggage.map(item => [item.type, item.quantity]),
+                theme: 'grid',
+                headStyles: { fillColor: themeColor },
+                margin: { left: pageMargin, right: pageMargin }
+            });
+            yPos = doc.autoTable.previous.finalY + 20;
+
+            // --- Total and Status ---
+            doc.setFontSize(12);
+            doc.setFont('helvetica', 'bold');
+            doc.setTextColor(...textColor);
+            doc.text(`Total à payer: ${bon.total.toFixed(2)} €`, pageWidth - pageMargin, yPos, { align: 'right' });
+
+            doc.setFont('helvetica', 'bold');
+            if (bon.paid) {
+                doc.setTextColor(...greenColor);
+                doc.text(`Statut: Payé`, pageMargin, yPos);
+            } else {
+                doc.setTextColor(...redColor);
+                doc.text(`Statut: Non Payé`, pageMargin, yPos);
+            }
+    
+            // --- Page Footer ---
+            const footerY = pageHeight - 15;
+            doc.setDrawColor(156, 163, 175);
+            doc.line(pageMargin, footerY, pageWidth - pageMargin, footerY);
+            
+            doc.setFontSize(10);
+            doc.setTextColor(107, 114, 128);
+            doc.setFont('helvetica', 'bold');
+            doc.text('IMENDI TRANS', pageWidth / 2, footerY + 7, { align: 'center' });
+
+            doc.save(`bon_${id}.pdf`);
+        } catch (error) {
+            this.showMessage('Erreur lors de la génération du PDF', 'error');
+        } finally {
+            this.hideLoader();
+        }
     }
 }
 
-// Initialize the app when DOM is loaded
-document.addEventListener('DOMContentLoaded', () => {
-    window.app = new IMENDITransApp();
-
-    // On page load, restore the view if available, otherwise default to dashboard
-    const savedView = localStorage.getItem('currentView');
-    if (window.app.currentUser && savedView && document.getElementById(`${savedView}-page`)) {
-        window.app.navigateTo(savedView);
-    } else if (window.app.currentUser) {
-        window.app.navigateTo('dashboard');
-    }
-});
+document.addEventListener('DOMContentLoaded', () => { window.app = new IMENDITransApp(); });
