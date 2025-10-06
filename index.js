@@ -8,7 +8,7 @@ class IMENDITransApp {
         this.currentView = 'dashboard';
         this.offlineMode = !navigator.onLine;
         this.db = null;
-        this.lastGeneratedNumber = 0;
+        this.lastGeneratedNumber = 0; // Tracks the highest sequential number in the current session.
         this.pendingBonData = null; // For confirmation modal
         
         this.init();
@@ -39,6 +39,9 @@ class IMENDITransApp {
                 const db = event.target.result;
                 if (!db.objectStoreNames.contains('sync-queue')) {
                     db.createObjectStore('sync-queue', { keyPath: 'id', autoIncrement: true });
+                }
+                if (!db.objectStoreNames.contains('app-state')) {
+                    db.createObjectStore('app-state');
                 }
             };
         });
@@ -131,8 +134,18 @@ class IMENDITransApp {
 
             if (response.ok) {
                 localStorage.setItem('access_token', data.access_token);
+                
+                try {
+                    const tx = this.db.transaction(['app-state'], 'readwrite');
+                    tx.onerror = (e) => console.error('Transaction error saving token:', e.target.error);
+                    const store = tx.objectStore('app-state');
+                    const request = store.put(data.access_token, 'access_token');
+                    request.onerror = (e) => console.error('Failed to put token in IndexedDB:', e.target.error);
+                } catch(e) {
+                    console.error('Could not initiate transaction to save token to IndexedDB.', e);
+                }
+
                 this.currentUser = data.user;
-                await this.initializeLastGeneratedNumber();
                 this.showPage('main-app');
                 this.navigateTo('dashboard');
             } else {
@@ -197,7 +210,6 @@ class IMENDITransApp {
                 const response = await fetch(`${SUPABASE_URL}/auth/v1/user`, { headers: { 'Authorization': `Bearer ${token}`, 'apikey': SUPABASE_ANON_KEY }});
                 if (response.ok) {
                     this.currentUser = await response.json();
-                    await this.initializeLastGeneratedNumber();
                     this.showPage('main-app');
                     const savedView = localStorage.getItem('currentView') || 'dashboard';
                     this.navigateTo(savedView);
@@ -274,6 +286,17 @@ class IMENDITransApp {
         localStorage.clear();
         this.currentUser = null;
         this.showPage('auth-page');
+        
+        // Clear from IndexedDB
+        try {
+            const tx = this.db.transaction(['app-state'], 'readwrite');
+            tx.onerror = (e) => console.error('Transaction error deleting token:', e.target.error);
+            const store = tx.objectStore('app-state');
+            const request = store.delete('access_token');
+            request.onerror = (e) => console.error('Failed to delete token from IndexedDB:', e.target.error);
+        } catch(e) {
+            console.error('Could not initiate transaction to delete token from IndexedDB.', e);
+        }
     }
 
     showPage(pageId) {
@@ -309,7 +332,11 @@ class IMENDITransApp {
     handleBonFormSubmit(event) {
         event.preventDefault();
         this.pendingBonData = this.getFormData();
-        const isEditing = !!document.getElementById('bon-id').dataset.editing;
+        if (!this.pendingBonData.user_id) {
+            this.showMessage("Erreur de session, impossible de sauvegarder. Veuillez vous reconnecter.", "error");
+            return;
+        }
+        const isEditing = document.getElementById('bon-id-field').readOnly;
         const title = isEditing ? 'Confirmer la modification' : 'Confirmer la création';
         const message = isEditing ? 'Voulez-vous vraiment enregistrer les modifications de ce bon ?' : 'Voulez-vous vraiment créer ce nouveau bon ?';
         this.showConfirmationModal(title, message, () => this.saveBon());
@@ -317,18 +344,19 @@ class IMENDITransApp {
 
     async saveBon() {
         this.showLoader();
-        const isEditing = !!document.getElementById('bon-id').dataset.editing;
+        const isEditing = document.getElementById('bon-id-field').readOnly;
         const formData = this.pendingBonData;
 
         try {
+            if (!formData || !formData.user_id) {
+                throw new Error("Session invalide ou données manquantes.");
+            }
+
             if (isEditing) {
                 const { id, ...updateData } = formData;
                 await this.updateSupabaseBon(id, updateData);
                 this.showMessage('Bon mis à jour avec succès !', 'success');
             } else {
-                const finalId = await this.getNextBonId();
-                formData.id = finalId;
-
                 if (this.offlineMode) {
                     await this.storeOffline(formData);
                     this.showMessage('Bon sauvegardé localement. Il sera synchronisé plus tard.', 'info');
@@ -336,13 +364,18 @@ class IMENDITransApp {
                     await this.submitToSupabase(formData);
                     this.showMessage('Bon enregistré avec succès !', 'success');
                 }
-                 const finalNumber = parseInt(finalId.split('-')[2]);
-                 this.lastGeneratedNumber = Math.max(this.lastGeneratedNumber, finalNumber);
-                 localStorage.setItem('lastGeneratedNumber', this.lastGeneratedNumber.toString());
+                
+                const bonIdRegex = /^BON-\d{4}-(\d+)$/;
+                const match = formData.id.match(bonIdRegex);
+                if (match) {
+                    const savedNumber = parseInt(match[1], 10);
+                    this.lastGeneratedNumber = Math.max(this.lastGeneratedNumber, savedNumber);
+                }
             }
             this.navigateTo('history');
         } catch (error) {
-            this.showMessage(`Erreur lors de l'enregistrement: ${error.message}`, 'error');
+            this.showMessage(`Erreur: ${error.message}`, 'error');
+            console.error("Save Bon Error:", error);
         } finally {
             this.hideLoader();
             this.pendingBonData = null;
@@ -351,7 +384,7 @@ class IMENDITransApp {
 
     getFormData() {
         return {
-            id: document.getElementById('bon-id').value,
+            id: document.getElementById('bon-id-field').value.trim(),
             sender_first_name: document.getElementById('sender-first-name').value,
             sender_last_name: document.getElementById('sender-last-name').value,
             sender_phone: document.getElementById('sender-phone').value,
@@ -368,63 +401,127 @@ class IMENDITransApp {
             })).filter(i => i.type && i.quantity > 0),
             total: parseFloat(document.getElementById('total').value),
             paid: document.getElementById('paid').checked,
-            user_id: this.currentUser.id
+            user_id: this.currentUser ? this.currentUser.id : null
         };
     }
     
-    async initializeLastGeneratedNumber() {
+    async fetchLastBonNumberFromServer() {
         const year = new Date().getFullYear();
-        let lastKnownNumber = parseInt(localStorage.getItem('lastGeneratedNumber') || '0');
-
-        if (!this.offlineMode) {
-            try {
-                const token = localStorage.getItem('access_token');
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/bons?id=like.BON-${year}-*&order=id.desc&limit=1`, {
+        let lastNumber = 0;
+    
+        if (this.offlineMode) {
+            console.warn("Mode hors ligne : impossible de récupérer le dernier numéro de bon. Utilisation du compteur local.");
+            return this.lastGeneratedNumber;
+        }
+    
+        try {
+            const token = localStorage.getItem('access_token');
+            if (!token) throw new Error("Utilisateur non authentifié.");
+    
+            if (!this.currentUser || !this.currentUser.id) {
+                console.error("User data not available for fetching bon number.");
+                throw new Error("SESSION_ERROR");
+            }
+    
+            const response = await fetch(
+                `${SUPABASE_URL}/rest/v1/bons?user_id=eq.${this.currentUser.id}&id=like.BON-${year}-%&select=id`, {
                     headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${token}` }
-                });
-                if (response.ok) {
-                    const result = await response.json();
-                    if (result.length > 0) {
-                        lastKnownNumber = Math.max(lastKnownNumber, parseInt(result[0].id.split('-')[2]));
+                }
+            );
+    
+            if (response.ok) {
+                const bons = await response.json();
+                if (bons.length > 0) {
+                    const bonNumbers = bons
+                        .map(bon => {
+                            const match = bon.id.match(/^BON-\d{4}-(\d+)$/);
+                            return match ? parseInt(match[1], 10) : 0;
+                        })
+                        .filter(num => !isNaN(num) && num > 0);
+                    
+                    if (bonNumbers.length > 0) {
+                        lastNumber = Math.max(...bonNumbers);
                     }
                 }
-            } catch (error) {
-                console.warn("Could not fetch last bon number from DB, relying on local value.", error);
+            } else {
+                 const errorData = await response.json();
+                 console.error("Échec de la récupération des bons:", errorData);
+                 throw new Error(errorData.message || "SERVER_COMMUNICATION_ERROR");
             }
+        } catch (error) {
+            console.error("Erreur critique lors de la récupération du dernier numéro de bon :", error);
+            if (error.message.includes("SESSION_ERROR")) {
+                this.showMessage("Erreur de session. Reconnexion requise.", "error");
+            } else {
+                this.showMessage("Erreur de synchronisation du N° de bon. Vérifiez les permissions (RLS SELECT) et la connexion.", "warning");
+            }
+            return this.lastGeneratedNumber;
         }
-        this.lastGeneratedNumber = lastKnownNumber;
+        
+        this.lastGeneratedNumber = Math.max(this.lastGeneratedNumber, lastNumber);
+        return this.lastGeneratedNumber;
     }
 
-    async getNextBonId() {
-        await this.initializeLastGeneratedNumber();
+    async generateNextBonId() {
+        const lastNumber = await this.fetchLastBonNumberFromServer();
         const year = new Date().getFullYear();
-        const nextNum = Math.max(this.lastGeneratedNumber + 1, 1000);
+        const nextNum = lastNumber + 1;
         return `BON-${year}-${nextNum.toString().padStart(4, '0')}`;
     }
-    
+
     async submitToSupabase(data) {
+        if (!this.currentUser || !this.currentUser.id) {
+            throw new Error("Session invalide. Impossible d'enregistrer.");
+        }
         const token = localStorage.getItem('access_token');
         const response = await fetch(`${SUPABASE_URL}/rest/v1/bons`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${token}` },
+            headers: { 
+                'Content-Type': 'application/json', 
+                'apikey': SUPABASE_ANON_KEY, 
+                'Authorization': `Bearer ${token}`,
+                'Prefer': 'return=representation'
+            },
             body: JSON.stringify(data)
         });
-        if (!response.ok) throw new Error('Échec de la soumission à la base de données.');
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({ message: 'Échec de la soumission à la base de données. Vérifiez votre connexion et les permissions (RLS).' }));
+            throw new Error(errorData.message || 'Une erreur de communication est survenue.');
+        }
+        return response.json();
     }
 
     async updateSupabaseBon(id, data) {
+        if (!this.currentUser || !this.currentUser.id) {
+            throw new Error("Session invalide. Impossible de mettre à jour.");
+        }
         const token = localStorage.getItem('access_token');
         const response = await fetch(`${SUPABASE_URL}/rest/v1/bons?id=eq.${id}`, {
             method: 'PATCH',
-            headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${token}` },
+            headers: { 
+                'Content-Type': 'application/json', 
+                'apikey': SUPABASE_ANON_KEY, 
+                'Authorization': `Bearer ${token}`,
+                'Prefer': 'return=representation'
+            },
             body: JSON.stringify(data)
         });
-        if (!response.ok) throw new Error('Échec de la mise à jour.');
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({ message: 'Échec de la mise à jour. Vérifiez votre connexion et les permissions (RLS).' }));
+            throw new Error(errorData.message || 'Une erreur de communication est survenue.');
+        }
+        return response.json();
     }
 
     async storeOffline(data) {
-        const tx = this.db.transaction(['sync-queue'], 'readwrite');
-        await tx.objectStore('sync-queue').add({ type: 'bon', data, timestamp: Date.now() });
+        await new Promise((resolve, reject) => {
+            const transaction = this.db.transaction(['sync-queue'], 'readwrite');
+            transaction.oncomplete = resolve;
+            transaction.onerror = reject;
+            const store = transaction.objectStore('sync-queue');
+            store.add({ type: 'bon', data, timestamp: Date.now() });
+        });
+
         if ('serviceWorker' in navigator && 'sync' in navigator.serviceWorker) {
             navigator.serviceWorker.ready.then(reg => reg.sync.register('sync-bons'));
         }
@@ -448,17 +545,14 @@ class IMENDITransApp {
             if (response.ok) {
                 const bons = await response.json();
                 
-                // Stats
                 const totalRevenue = bons.reduce((sum, bon) => sum + (bon.total || 0), 0);
                 document.getElementById('dashboard-bons-count').textContent = bons.length;
                 document.getElementById('dashboard-revenue').textContent = `${totalRevenue.toFixed(2)} €`;
 
-                // Recent bons
                 const container = document.getElementById('recent-bons-list');
                 const emptyState = container.querySelector('.empty-state');
                 const recentBons = bons.slice(0, 3);
                 
-                // Clear previous items but not the empty state div
                 container.querySelectorAll('.recent-bon-item').forEach(el => el.remove());
 
                 if (recentBons.length === 0) {
@@ -478,9 +572,12 @@ class IMENDITransApp {
                         container.appendChild(item);
                     });
                 }
+            } else {
+                const errorData = await response.json();
+                throw new Error(errorData.message);
             }
         } catch (error) {
-            this.showMessage('Erreur lors du chargement du dashboard', 'error');
+            this.showMessage(`Erreur chargement dashboard: ${error.message}`, 'error');
         } finally {
             this.hideLoader();
         }
@@ -489,12 +586,13 @@ class IMENDITransApp {
     async loadNewBon(bon = null) {
         document.getElementById('bon-form').reset();
         document.getElementById('luggage-container').innerHTML = '';
-        document.getElementById('bon-id').dataset.editing = bon ? 'true' : 'false';
+        const bonIdField = document.getElementById('bon-id-field');
 
         if (bon) {
             document.getElementById('bon-form-title').textContent = 'Modifier le Bon';
-            document.getElementById('current-bon-id').textContent = bon.id;
-            document.getElementById('bon-id').value = bon.id;
+            bonIdField.value = bon.id;
+            bonIdField.readOnly = true;
+
             Object.keys(bon).forEach(key => {
                 const elId = key.replace(/_/g, '-');
                 const el = document.getElementById(elId);
@@ -506,9 +604,13 @@ class IMENDITransApp {
             (bon.luggage || []).forEach(item => this.addLuggageItem(item));
         } else {
             document.getElementById('bon-form-title').textContent = 'Nouveau Bon';
-            const nextId = await this.getNextBonId();
-            document.getElementById('current-bon-id').textContent = nextId;
-            document.getElementById('bon-id').value = nextId;
+            bonIdField.readOnly = false;
+            bonIdField.value = "Génération en cours...";
+            
+            this.generateNextBonId().then(nextId => {
+                bonIdField.value = nextId;
+            });
+            
             this.addLuggageItem();
         }
         this.updateTotalColis();
@@ -525,9 +627,12 @@ class IMENDITransApp {
                 const bons = await response.json();
                 this.displayHistory(bons);
                 document.getElementById('history-empty-state').classList.toggle('hidden', bons.length > 0);
-            } else { throw new Error("Failed to fetch history"); }
+            } else { 
+                const errorData = await response.json();
+                throw new Error(errorData.message || "Failed to fetch history");
+            }
         } catch (error) {
-            this.showMessage('Erreur lors du chargement de l\'historique', 'error');
+            this.showMessage(`Erreur chargement historique: ${error.message}`, 'error');
         } finally {
             this.hideLoader();
         }
@@ -542,7 +647,7 @@ class IMENDITransApp {
                 <td>${bon.recipient_first_name} ${bon.recipient_last_name}</td>
                 <td>${bon.origin} → ${bon.destination}</td>
                 <td>${new Date(bon.created_at).toLocaleDateString()}</td>
-                <td>${bon.total.toFixed(2)} €</td>
+                <td>${(bon.total || 0).toFixed(2)} €</td>
                 <td><span class="status-badge ${bon.paid ? 'status-paid' : 'status-unpaid'}">${bon.paid ? 'Payé' : 'Non Payé'}</span></td>
                 <td class="actions-cell">
                     <button class="btn btn-secondary btn-icon edit-btn" data-id='${JSON.stringify(bon)}' aria-label="Modifier">
@@ -591,9 +696,12 @@ class IMENDITransApp {
                 document.getElementById('paid-count').textContent = `${totals.paidCount} bons`;
                 document.getElementById('unpaid-amount').textContent = `${totals.unpaidAmount.toFixed(2)} €`;
                 document.getElementById('unpaid-count').textContent = `${totals.unpaidCount} bons`;
+            } else {
+                const errorData = await response.json();
+                throw new Error(errorData.message);
             }
         } catch (error) {
-            this.showMessage('Erreur lors du chargement des statistiques', 'error');
+            this.showMessage(`Erreur chargement statistiques: ${error.message}`, 'error');
         } finally {
             this.hideLoader();
         }
@@ -698,12 +806,104 @@ class IMENDITransApp {
         toast.className = `toast ${type}`;
         toast.textContent = message;
         container.appendChild(toast);
-        setTimeout(() => toast.remove(), 4000);
+        setTimeout(() => toast.remove(), 5000); // Increased duration for error messages
     }
 
     showLoader() { document.getElementById('loader-overlay').classList.remove('hidden'); }
     hideLoader() { document.getElementById('loader-overlay').classList.add('hidden'); }
     
+    async fetchBonData(id) {
+        const token = localStorage.getItem('access_token');
+        const response = await fetch(`${SUPABASE_URL}/rest/v1/bons?id=eq.${id}`, { headers: {'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${token}`}});
+        if (!response.ok) throw new Error('Failed to fetch bon data.');
+        const bons = await response.json();
+        if (bons.length === 0) throw new Error('Bon non trouvé');
+        return bons[0];
+    }
+
+    createBonHTMLElement(bon) {
+        const bonElement = document.createElement('div');
+        bonElement.className = 'bon-render-container';
+        Object.assign(bonElement.style, {
+            position: 'absolute',
+            left: '-9999px',
+            width: '800px',
+            padding: '40px',
+            fontFamily: 'Arial, sans-serif',
+            backgroundColor: '#ffffff',
+            color: '#333',
+            boxSizing: 'border-box',
+            minHeight: '1131px', // A4 aspect ratio for 800px width
+        });
+
+        const statusColor = bon.paid ? '#22c55e' : '#ef4444';
+        const senderName = `${bon.sender_first_name || ''} ${bon.sender_last_name || ''}`.trim();
+        const recipientName = `${bon.recipient_first_name || ''} ${bon.recipient_last_name || ''}`.trim();
+
+        bonElement.innerHTML = `
+            <div style="background-color: #1E3A8A; color: white; padding: 30px; text-align: center; margin: -40px -40px 40px -40px;">
+                <h2 style="margin: 0; font-size: 2.5em; font-weight: bold; color: white;">IMENDI TRANS</h2>
+                <p style="margin: 10px 0 0; font-size: 2.5em; font-weight: bold; color: white;">BON D'EXPÉDITION</p>
+            </div>
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 30px;">
+                <div style="font-size: 1.2em;">
+                    <strong>Numéro:</strong> ${bon.id}
+                </div>
+                <div style="font-size: 1.2em; text-align: right;">
+                    <strong>Date:</strong> ${new Date(bon.created_at).toLocaleDateString('fr-FR')}
+                </div>
+            </div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 40px; margin-bottom: 30px; border-top: 2px solid #eee; padding-top: 30px;">
+                <div>
+                    <h3 style="font-size: 1.5em; color: #1E3A8A; margin-top: 0; margin-bottom: 15px; border-bottom: 1px solid #1E3A8A; padding-bottom: 5px;">Expéditeur</h3>
+                    <p style="margin: 8px 0; font-size: 1.2em;"><strong>Nom:</strong> ${senderName}</p>
+                    <p style="margin: 8px 0; font-size: 1.2em;"><strong>Tél:</strong> ${bon.sender_phone || 'N/A'}</p>
+                    <p style="margin: 8px 0; font-size: 1.2em;"><strong>CIN:</strong> ${bon.sender_cin || 'N/A'}</p>
+                </div>
+                <div>
+                    <h3 style="font-size: 1.5em; color: #1E3A8A; margin-top: 0; margin-bottom: 15px; border-bottom: 1px solid #1E3A8A; padding-bottom: 5px;">Destinataire</h3>
+                    <p style="margin: 8px 0; font-size: 1.2em;"><strong>Nom:</strong> ${recipientName}</p>
+                    <p style="margin: 8px 0; font-size: 1.2em;"><strong>Tél:</strong> ${bon.recipient_phone || 'N/A'}</p>
+                    <p style="margin: 8px 0; font-size: 1.2em;"><strong>CIN:</strong> ${bon.recipient_cin || 'N/A'}</p>
+                </div>
+            </div>
+            <div style="border-top: 2px solid #eee; padding-top: 30px; margin-bottom: 30px;">
+                <h3 style="font-size: 1.5em; color: #1E3A8A; margin-top: 0; margin-bottom: 15px; border-bottom: 1px solid #1E3A8A; padding-bottom: 5px;">Détails de l'expédition</h3>
+                <p style="margin: 8px 0; font-size: 1.2em;"><strong>De:</strong> ${bon.origin || 'N/A'}</p>
+                <p style="margin: 8px 0; font-size: 1.2em;"><strong>À:</strong> ${bon.destination || 'N/A'}</p>
+            </div>
+            
+            <div style="margin-bottom: 40px;">
+                <h3 style="font-size: 1.5em; color: #1E3A8A; margin-top: 0; margin-bottom: 15px; border-bottom: 1px solid #1E3A8A; padding-bottom: 5px;">Bagages</h3>
+                <table style="width: 100%; border-collapse: collapse; font-size: 1.2em;">
+                    <thead>
+                        <tr style="background-color: #f3f4f6;">
+                            <th style="padding: 12px; text-align: left; border-bottom: 2px solid #1E3A8A;">Article</th>
+                            <th style="padding: 12px; text-align: right; border-bottom: 2px solid #1E3A8A;">Quantité</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${bon.luggage && bon.luggage.length > 0 ? bon.luggage.map(item => `
+                            <tr style="border-bottom: 1px solid #ddd;">
+                                <td style="padding: 12px;">${item.type}</td>
+                                <td style="padding: 12px; text-align: right;">${item.quantity}</td>
+                            </tr>
+                        `).join('') : `<tr><td colspan="2" style="padding: 12px; text-align: center; color: #777;">Aucun bagage enregistré.</td></tr>`}
+                    </tbody>
+                </table>
+            </div>
+
+            <div style="border-top: 2px solid #eee; padding-top: 30px; text-align: right;">
+                <p style="margin: 8px 0; font-size: 1.5em;"><strong>Total:</strong> ${(bon.total || 0).toFixed(2)} €</p>
+                <p style="margin: 8px 0; font-size: 1.5em; font-weight: bold; color: ${statusColor};"><strong>Statut:</strong> ${bon.paid ? 'Payé' : 'Non Payé'}</p>
+            </div>
+            <div style="margin-top: 50px; text-align: center; font-size: 0.9em; color: #777; border-top: 1px solid #ccc; padding-top: 20px;">
+                <p style="margin: 0;">Merci d'utiliser IMENDI TRANS</p>
+            </div>
+        `;
+        return bonElement;
+    }
+
     async shareBon(id) {
         if (!navigator.share) {
             this.showMessage('Le partage n\'est pas supporté sur ce navigateur.', 'info');
@@ -712,72 +912,19 @@ class IMENDITransApp {
 
         this.showLoader();
         try {
-            // 1. Fetch bon data
-            const token = localStorage.getItem('access_token');
-            const response = await fetch(`${SUPABASE_URL}/rest/v1/bons?id=eq.${id}`, { headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${token}` } });
-            if (!response.ok) throw new Error("Bon non trouvé");
-            const bon = (await response.json())[0];
-
-            // 2. Create an off-screen element to render the bon image
-            const bonElement = document.createElement('div');
-            bonElement.id = 'bon-for-sharing';
-            Object.assign(bonElement.style, {
-                position: 'absolute',
-                left: '-9999px',
-                width: '400px',
-                padding: '20px',
-                fontFamily: 'Arial, sans-serif',
-                backgroundColor: '#ffffff',
-                border: '1px solid #ccc',
-                color: '#333'
-            });
-
-            const statusColor = bon.paid ? '#22c55e' : '#ef4444';
-            const senderName = `${bon.sender_first_name || ''} ${bon.sender_last_name || ''}`.trim();
-            const recipientName = `${bon.recipient_first_name || ''} ${bon.recipient_last_name || ''}`.trim();
-
-            bonElement.innerHTML = `
-                <div style="background-color: #1E3A8A; color: white; padding: 15px; text-align: center; margin: -20px -20px 20px -20px;">
-                    <h2 style="margin: 0; font-size: 1.5em;">BON D'EXPÉDITION</h2>
-                    <p style="margin: 5px 0 0; font-weight: bold;">IMENDI TRANS</p>
-                </div>
-                <p style="text-align: right; margin-bottom: 15px; font-size: 0.9em;"><strong>Numéro:</strong> ${bon.id}</p>
-                <div style="display: flex; justify-content: space-between; margin-bottom: 20px; border-top: 1px solid #eee; padding-top: 15px;">
-                    <div style="width: 48%;">
-                        <h3 style="font-size: 1.1em; color: #1E3A8A; margin-top: 0;">Expéditeur</h3>
-                        <p style="margin: 4px 0;"><strong>Nom:</strong> ${senderName}</p>
-                        <p style="margin: 4px 0;"><strong>Tél:</strong> ${bon.sender_phone}</p>
-                    </div>
-                    <div style="width: 48%;">
-                        <h3 style="font-size: 1.1em; color: #1E3A8A; margin-top: 0;">Destinataire</h3>
-                        <p style="margin: 4px 0;"><strong>Nom:</strong> ${recipientName}</p>
-                        <p style="margin: 4px 0;"><strong>Tél:</strong> ${bon.recipient_phone}</p>
-                    </div>
-                </div>
-                <div style="border-top: 1px solid #eee; padding-top: 15px;">
-                     <h3 style="font-size: 1.1em; color: #1E3A8A; margin-top: 0;">Détails de l'expédition</h3>
-                     <p style="margin: 4px 0;"><strong>De:</strong> ${bon.origin || 'N/A'}</p>
-                     <p style="margin: 4px 0;"><strong>À:</strong> ${bon.destination || 'N/A'}</p>
-                </div>
-                <div style="border-top: 1px solid #eee; padding-top: 15px; margin-top: 20px; text-align: right;">
-                    <p style="margin: 4px 0; font-size: 1.2em;"><strong>Total:</strong> ${bon.total.toFixed(2)} €</p>
-                    <p style="margin: 4px 0; font-size: 1.2em; color: ${statusColor};"><strong>Statut:</strong> ${bon.paid ? 'Payé' : 'Non Payé'}</p>
-                </div>
-            `;
+            const bon = await this.fetchBonData(id);
+            const bonElement = this.createBonHTMLElement(bon);
             document.body.appendChild(bonElement);
 
-            // 3. Use html2canvas to create image
-            const canvas = await html2canvas(bonElement, { scale: 2 });
+            const canvas = await html2canvas(bonElement, { 
+                scale: 2,
+                useCORS: true
+            });
             const dataUrl = canvas.toDataURL('image/png');
-
-            // 4. Convert data URL to blob/file
             const blob = await (await fetch(dataUrl)).blob();
             const file = new File([blob], `bon-${id}.png`, { type: 'image/png' });
-
-            // 5. Clean up the temporary element
             document.body.removeChild(bonElement);
 
-            // 6. Use Web Share API
             const shareData = {
                 files: [file],
                 title: `Bon d'expédition ${id}`,
@@ -801,147 +948,42 @@ class IMENDITransApp {
     async exportPDF(id) {
         this.showLoader();
         try {
-            const token = localStorage.getItem('access_token');
-            const response = await fetch(`${SUPABASE_URL}/rest/v1/bons?id=eq.${id}`, { headers: {'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${token}`}});
-            if (!response.ok) throw new Error('Failed to fetch bon data.');
-            const bon = (await response.json())[0];
-    
-            const { jsPDF } = window.jspdf;
-            const doc = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' });
-            
-            // --- Define constants ---
-            const themeColor = [30, 58, 138];
-            const textColor = [31, 41, 55];
-            const whiteColor = [255, 255, 255];
-            const greenColor = [34, 197, 94];
-            const redColor = [239, 68, 68];
-            const pageMargin = 20;
-            const pageWidth = doc.internal.pageSize.getWidth();
-            const pageHeight = doc.internal.pageSize.getHeight();
-            let yPos = 0;
+            const bon = await this.fetchBonData(id);
+            const bonElement = this.createBonHTMLElement(bon);
+            document.body.appendChild(bonElement);
 
-            // --- Header ---
-            doc.setFillColor(...themeColor);
-            doc.rect(0, 0, pageWidth, 35, 'F'); // Filled rectangle for header background
-
-            doc.setFont('helvetica', 'bold');
-            doc.setFontSize(18);
-            doc.setTextColor(...whiteColor);
-            doc.text('BON D\'EXPÉDITION IMENDI TRANS', pageWidth / 2, 18, { align: 'center' });
-
-            doc.setFontSize(10);
-            doc.text(`Numéro: ${bon.id}`, pageWidth / 2, 26, { align: 'center' });
-            
-            yPos = 45; // Start content below header
-
-            // --- Date ---
-            doc.setFont('helvetica', 'normal');
-            doc.setFontSize(10);
-            doc.setTextColor(...textColor);
-            doc.text(`Date d'émission: ${new Date(bon.created_at).toLocaleDateString('fr-FR')}`, pageWidth - pageMargin, yPos, { align: 'right' });
-            yPos += 10;
-
-            // --- Sender & Recipient side-by-side ---
-            const col1X = pageMargin;
-            const col2X = pageWidth / 2 + 5;
-            let initialY = yPos;
-
-            const drawClientDetails = (title, clientData, x, y) => {
-                let currentY = y;
-                doc.setFont('helvetica', 'bold');
-                doc.setFontSize(12);
-                doc.setTextColor(...themeColor);
-                doc.text(title, x, currentY);
-                currentY += 7;
-
-                doc.setFontSize(10);
-                doc.setTextColor(...textColor);
-
-                const printDetail = (label, value) => {
-                    doc.setFont('helvetica', 'normal');
-                    doc.text(`${label}:`, x, currentY);
-                    doc.setFont('helvetica', 'bold');
-                    doc.text(value || 'N/A', x + 15, currentY);
-                    currentY += 6;
-                };
-
-                printDetail('Nom', `${clientData.first_name || ''} ${clientData.last_name || ''}`.trim());
-                printDetail('Tél', clientData.phone);
-                printDetail('CIN', clientData.cin);
-                
-                return currentY;
-            };
-
-            const senderData = { first_name: bon.sender_first_name, last_name: bon.sender_last_name, phone: bon.sender_phone, cin: bon.sender_cin };
-            const recipientData = { first_name: bon.recipient_first_name, last_name: bon.recipient_last_name, phone: bon.recipient_phone, cin: bon.recipient_cin };
-
-            const finalY1 = drawClientDetails('Expéditeur', senderData, col1X, initialY);
-            const finalY2 = drawClientDetails('Destinataire', recipientData, col2X, initialY);
-            
-            yPos = Math.max(finalY1, finalY2) + 5;
-
-            // --- Shipping Details ---
-            doc.setFont('helvetica', 'bold');
-            doc.setFontSize(12);
-            doc.setTextColor(...themeColor);
-            doc.text("Détails de l'expédition", pageMargin, yPos);
-            yPos += 7;
-
-            doc.setFont('helvetica', 'normal');
-            doc.setFontSize(10);
-            doc.setTextColor(...textColor);
-
-            const printShippingDetail = (label, value) => {
-                doc.setFont('helvetica', 'normal');
-                doc.text(`${label}:`, pageMargin, yPos);
-                doc.setFont('helvetica', 'bold');
-                doc.text(value || 'N/A', pageMargin + 40, yPos);
-                yPos += 6;
-            };
-
-            printShippingDetail("Ville d'expédition", bon.origin);
-            printShippingDetail("Ville de destination", bon.destination);
-            
-            yPos += 10;
-
-            // --- Luggage Table ---
-            doc.autoTable({
-                startY: yPos,
-                head: [['Article', 'Quantité']],
-                body: bon.luggage.map(item => [item.type, item.quantity]),
-                theme: 'grid',
-                headStyles: { fillColor: themeColor },
-                margin: { left: pageMargin, right: pageMargin }
+            const canvas = await html2canvas(bonElement, {
+                scale: 2,
+                useCORS: true
             });
-            yPos = doc.autoTable.previous.finalY + 20;
+            document.body.removeChild(bonElement);
 
-            // --- Total and Status ---
-            doc.setFontSize(12);
-            doc.setFont('helvetica', 'bold');
-            doc.setTextColor(...textColor);
-            doc.text(`Total à payer: ${bon.total.toFixed(2)} €`, pageWidth - pageMargin, yPos, { align: 'right' });
+            const imgData = canvas.toDataURL('image/jpeg', 0.95);
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF({
+                orientation: 'p',
+                unit: 'mm',
+                format: 'a4'
+            });
 
-            doc.setFont('helvetica', 'bold');
-            if (bon.paid) {
-                doc.setTextColor(...greenColor);
-                doc.text(`Statut: Payé`, pageMargin, yPos);
-            } else {
-                doc.setTextColor(...redColor);
-                doc.text(`Statut: Non Payé`, pageMargin, yPos);
-            }
-    
-            // --- Page Footer ---
-            const footerY = pageHeight - 15;
-            doc.setDrawColor(156, 163, 175);
-            doc.line(pageMargin, footerY, pageWidth - pageMargin, footerY);
+            const imgProps = doc.getImageProperties(imgData);
+            const pdfWidth = doc.internal.pageSize.getWidth();
+            const pdfHeight = doc.internal.pageSize.getHeight();
+            const imgWidth = imgProps.width;
+            const imgHeight = imgProps.height;
+
+            const ratio = Math.min(pdfWidth / imgWidth, pdfHeight / imgHeight);
+
+            const w = imgWidth * ratio;
+            const h = imgHeight * ratio;
             
-            doc.setFontSize(10);
-            doc.setTextColor(107, 114, 128);
-            doc.setFont('helvetica', 'bold');
-            doc.text('IMENDI TRANS', pageWidth / 2, footerY + 7, { align: 'center' });
+            const x = (pdfWidth - w) / 2;
+            const y = (pdfHeight - h) / 2;
 
+            doc.addImage(imgData, 'JPEG', x, y, w, h);
             doc.save(`bon_${id}.pdf`);
         } catch (error) {
+            console.error('PDF Export error:', error);
             this.showMessage('Erreur lors de la génération du PDF', 'error');
         } finally {
             this.hideLoader();
