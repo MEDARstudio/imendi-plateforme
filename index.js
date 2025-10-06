@@ -74,7 +74,6 @@ class IMENDITransApp {
         document.getElementById('quick-create-bon').addEventListener('click', () => this.navigateTo('new-bon'));
         document.querySelectorAll('.navigate-new-bon').forEach(btn => btn.addEventListener('click', () => this.navigateTo('new-bon')));
         document.getElementById('bon-form').addEventListener('submit', (e) => this.handleBonFormSubmit(e));
-        document.getElementById('retry-bon-id').addEventListener('click', () => this.loadNewBon());
 
         // History
         document.getElementById('search-input').addEventListener('input', (e) => this.searchBons(e.target.value));
@@ -95,6 +94,19 @@ class IMENDITransApp {
         document.getElementById('confirmation-modal').addEventListener('click', (e) => {
             if (e.target.id === 'confirmation-modal') this.hideConfirmationModal();
         });
+
+        // Service Worker Listener
+        this.setupServiceWorkerListener();
+    }
+    
+    setupServiceWorkerListener() {
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.addEventListener('message', event => {
+                if (event.data && event.data.type === 'SYNC_ERROR') {
+                    this.showMessage(event.data.payload.message, 'error');
+                }
+            });
+        }
     }
 
     async registerServiceWorker() {
@@ -136,20 +148,30 @@ class IMENDITransApp {
 
             if (response.ok) {
                 localStorage.setItem('access_token', data.access_token);
+                localStorage.setItem('refresh_token', data.refresh_token);
                 
                 try {
                     const tx = this.db.transaction(['app-state'], 'readwrite');
-                    tx.onerror = (e) => console.error('Transaction error saving token:', e.target.error);
                     const store = tx.objectStore('app-state');
-                    const request = store.put(data.access_token, 'access_token');
-                    request.onerror = (e) => console.error('Failed to put token in IndexedDB:', e.target.error);
+                    store.put(data.access_token, 'access_token');
+                    store.put(data.refresh_token, 'refresh_token');
+                    tx.oncomplete = () => {
+                         this.currentUser = data.user;
+                         this.showPage('main-app');
+                         this.navigateTo('dashboard');
+                    };
+                    tx.onerror = (e) => {
+                        console.error('Transaction error saving tokens:', e.target.error);
+                        this.currentUser = data.user;
+                        this.showPage('main-app');
+                        this.navigateTo('dashboard');
+                    };
                 } catch(e) {
-                    console.error('Could not initiate transaction to save token to IndexedDB.', e);
+                    console.error('Could not initiate transaction to save tokens to IndexedDB.', e);
+                    this.currentUser = data.user;
+                    this.showPage('main-app');
+                    this.navigateTo('dashboard');
                 }
-
-                this.currentUser = data.user;
-                this.showPage('main-app');
-                this.navigateTo('dashboard');
             } else {
                 this.showMessage(data.error_description || 'Identifiants incorrects', 'error');
             }
@@ -217,6 +239,7 @@ class IMENDITransApp {
                     this.navigateTo(savedView);
                 } else {
                     localStorage.removeItem('access_token');
+                    localStorage.removeItem('refresh_token');
                     this.showPage('auth-page');
                 }
             } catch (error) {
@@ -292,12 +315,12 @@ class IMENDITransApp {
         // Clear from IndexedDB
         try {
             const tx = this.db.transaction(['app-state'], 'readwrite');
-            tx.onerror = (e) => console.error('Transaction error deleting token:', e.target.error);
+            tx.onerror = (e) => console.error('Transaction error deleting tokens:', e.target.error);
             const store = tx.objectStore('app-state');
-            const request = store.delete('access_token');
-            request.onerror = (e) => console.error('Failed to delete token from IndexedDB:', e.target.error);
+            store.delete('access_token');
+            store.delete('refresh_token');
         } catch(e) {
-            console.error('Could not initiate transaction to delete token from IndexedDB.', e);
+            console.error('Could not initiate transaction to delete tokens from IndexedDB.', e);
         }
     }
 
@@ -333,6 +356,17 @@ class IMENDITransApp {
     
     handleBonFormSubmit(event) {
         event.preventDefault();
+
+        const bonIdField = document.getElementById('bon-id-field');
+        if (!bonIdField.readOnly) {
+            const bonIdValue = bonIdField.value.trim();
+            const bonIdRegex = /^BON-\d{4}-\d{4,}$/;
+            if (!bonIdRegex.test(bonIdValue)) {
+                this.showMessage("Le N° de bon manuel est invalide. Format attendu: BON-AAAA-NNNN (ex: BON-2024-0001)", 'error');
+                return;
+            }
+        }
+
         this.pendingBonData = this.getFormData();
         if (!this.pendingBonData.user_id) {
             this.showMessage("Erreur de session, impossible de sauvegarder. Veuillez vous reconnecter.", "error");
@@ -369,13 +403,13 @@ class IMENDITransApp {
                     } catch (error) {
                         if (error.message === "DUPLICATE_ID") {
                             console.warn("Duplicate ID detected, attempting to recover.");
-                            this.showMessage('Conflit de N° de bon, tentative de correction...', 'warning');
-                            
-                            await this.loadNewBon(); // Reload to get a fresh number from server
-                            formData.id = document.getElementById('bon-id-field').value;
-                            
-                            await this.submitToSupabase(formData);
-                            this.showMessage('Correction réussie. Bon enregistré avec le nouveau N°.', 'success');
+                            this.showMessage('Ce N° de bon existe déjà. Veuillez en utiliser un autre.', 'error');
+                            // Make field editable again if it was manual
+                             const bonIdField = document.getElementById('bon-id-field');
+                             if (!document.getElementById('bon-form').dataset.editingId) {
+                                bonIdField.readOnly = false;
+                             }
+                            return; // Stop execution
                         } else {
                             throw error;
                         }
@@ -392,11 +426,7 @@ class IMENDITransApp {
             }
             this.navigateTo('history');
         } catch (error) {
-            if (error.message === "DUPLICATE_ID") {
-                this.showMessage('La correction automatique a échoué. Le N° de bon existe déjà.', 'error');
-            } else {
-                this.showMessage(`Erreur: ${error.message}`, 'error');
-            }
+            this.showMessage(`Erreur: ${error.message}`, 'error');
             console.error("Save Bon Error:", error);
         } finally {
             this.hideLoader();
@@ -549,22 +579,18 @@ class IMENDITransApp {
         form.reset();
         document.getElementById('luggage-container').innerHTML = '';
         const bonIdField = document.getElementById('bon-id-field');
-        const errorContainer = document.getElementById('bon-id-error');
-    
-        const toggleFormState = (enabled, isError = false) => {
-            form.querySelectorAll('input:not(#bon-id-field), button:not(#retry-bon-id):not(#cancel-bon)').forEach(el => {
+        const manualHelper = document.getElementById('bon-id-manual-helper');
+
+        const toggleFormState = (enabled) => {
+            form.querySelectorAll('input:not(#bon-id-field), button:not(#cancel-bon)').forEach(el => {
                 el.disabled = !enabled;
             });
-            bonIdField.readOnly = true; // Always readonly
-            if (isError) {
-                errorContainer.classList.remove('hidden');
-                form.querySelector('button[type="submit"]').disabled = true;
-            } else {
-                errorContainer.classList.add('hidden');
-            }
+            form.querySelector('button[type="submit"]').disabled = !enabled;
         };
         
         delete form.dataset.editingId;
+        manualHelper.classList.add('hidden');
+        bonIdField.readOnly = true;
     
         if (bon) { // Editing existing bon
             document.getElementById('bon-form-title').textContent = 'Modifier le Bon';
@@ -584,7 +610,8 @@ class IMENDITransApp {
     
         } else { // Creating new bon
             document.getElementById('bon-form-title').textContent = 'Nouveau Bon';
-            bonIdField.value = 'Synchronisation...';
+            bonIdField.value = '';
+            bonIdField.placeholder = 'Génération en cours...';
             toggleFormState(false);
     
             if (!navigator.onLine) {
@@ -600,61 +627,53 @@ class IMENDITransApp {
     
             try {
                 const token = localStorage.getItem('access_token');
-                if (!token || !this.currentUser || !this.currentUser.id) {
-                    throw new Error("AUTH_ERROR");
-                }
+                if (!token || !this.currentUser || !this.currentUser.id) throw new Error("AUTH_ERROR");
     
-                const year = new Date().getFullYear();
-                const response = await fetch(
-                    `${SUPABASE_URL}/rest/v1/bons?user_id=eq.${this.currentUser.id}&id=like.BON-${year}-%&select=id`,
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/bons?user_id=eq.${this.currentUser.id}&select=id&order=id.desc&limit=1`, 
                     { headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${token}` } }
                 );
     
-                if (response.status === 401 || response.status === 403) {
-                    throw new Error("AUTH_ERROR");
-                }
-    
+                if (response.status === 401) throw new Error("AUTH_ERROR");
                 if (!response.ok) {
                     const errorData = await response.json().catch(() => ({ message: `Le serveur a répondu avec une erreur (${response.status})` }));
                     throw new Error(errorData.message);
                 }
     
                 const bons = await response.json();
-                let serverLastNumber = 0;
                 if (bons.length > 0) {
-                    const bonNumbers = bons.map(b => parseInt((b.id.split('-')[2] || '0'), 10));
-                    serverLastNumber = Math.max(...bonNumbers);
+                    const lastId = bons[0].id;
+                    const parts = lastId.split('-');
+                    let lastNumber = 0;
+                    if (parts.length === 3) {
+                       lastNumber = parseInt(parts[2], 10) || 0;
+                    }
+                    const year = new Date().getFullYear();
+                    const nextNum = lastNumber + 1;
+                    bonIdField.value = `BON-${year}-${nextNum.toString().padStart(4, '0')}`;
+                } else {
+                    // No history, enable manual input
+                    manualHelper.classList.remove('hidden');
+                    bonIdField.readOnly = false;
+                    bonIdField.placeholder = 'Ex: BON-2024-0001';
                 }
-    
-                this.lastGeneratedNumber = Math.max(this.lastGeneratedNumber, serverLastNumber);
-                localStorage.setItem('lastGeneratedNumber', this.lastGeneratedNumber.toString());
-    
-                const nextNum = this.lastGeneratedNumber + 1;
-                bonIdField.value = `BON-${year}-${nextNum.toString().padStart(4, '0')}`;
                 
                 this.addLuggageItem();
-                toggleFormState(true, false);
+                toggleFormState(true);
     
             } catch (error) {
-                if (error.message === "AUTH_ERROR") {
-                    await this.handleLogout();
-                    return;
-                }
+                if (error.message === "AUTH_ERROR") { await this.handleLogout(); return; }
     
                 console.warn("Could not sync bon number, falling back to local cache.", error);
-                
                 const year = new Date().getFullYear();
                 const lastNumber = this.lastGeneratedNumber;
                 const nextNum = lastNumber + 1;
                 bonIdField.value = `BON-${year}-${nextNum.toString().padStart(4, '0')}`;
-                
                 this.addLuggageItem();
-                toggleFormState(true, false); // Enable form, hide inline error
+                toggleFormState(true);
             }
         }
         this.updateTotalColis();
     }
-
 
     async loadHistory() {
         this.showLoader();

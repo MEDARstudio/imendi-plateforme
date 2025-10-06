@@ -18,6 +18,7 @@ const STATIC_CACHE = [
 ];
 
 const SUPABASE_URL = 'https://cxjftikjoskdeakoxhgr.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN4amZ0aWtqb3NrZGVha294aGdyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTk1MDA1OTgsImV4cCI6MjA3NTA3NjU5OH0.CS2iXOABcX4QPY472eXW8MkxoQJXDiC_WzKWPhFtISY';
 
 self.addEventListener('install', (event) => {
     event.waitUntil(
@@ -29,20 +30,14 @@ self.addEventListener('install', (event) => {
 
 self.addEventListener('fetch', (event) => {
     // Strategy for API calls to Supabase
-    if (event.request.url.includes(SUPABASE_URL)) {
-        // For non-GET requests (POST, PATCH, etc.), do not use the service worker.
-        // Let the browser handle them directly. This is crucial for ensuring mutations
-        // reach the server correctly when online. The app's own logic will queue them for
-        // background sync if the request fails (i.e., when offline).
+    if (event.request.url.startsWith(SUPABASE_URL)) {
         if (event.request.method !== 'GET') {
             return;
         }
 
-        // For GET requests, use a "network-first, then cache" strategy.
         event.respondWith(
             fetch(event.request)
                 .then((response) => {
-                    // If the network request is successful, update the cache.
                     if (response.ok) {
                         const responseClone = response.clone();
                         caches.open(CACHE_NAME).then((cache) => {
@@ -52,38 +47,21 @@ self.addEventListener('fetch', (event) => {
                     return response;
                 })
                 .catch(() => {
-                    // If the network fails, serve the response from the cache.
-                    return caches.match(event.request);
+                    return caches.match(event.request).then(res => res || new Response(null, { status: 503, statusText: 'Service Unavailable' }));
                 })
         );
     } else if (event.request.mode === 'navigate') {
-        // Strategy for page navigation
         event.respondWith(
             fetch(event.request)
-                .then((response) => {
-                    if (response.ok) {
-                        return response;
-                    }
-                    // If we get a 404 or other error, serve the app shell from cache.
-                    return caches.match('/index.html');
-                })
-                .catch(() => {
-                    // If the network is down, serve the app shell from cache.
-                    return caches.match('/index.html');
-                })
+                .catch(() => caches.match('/index.html'))
         );
     } else {
-        // Strategy for static assets (CSS, JS, images)
-        // Use a "cache-first" strategy for performance.
         event.respondWith(
             caches.match(event.request)
-                .then((response) => {
-                    return response || fetch(event.request);
-                })
+                .then((response) => response || fetch(event.request))
         );
     }
 });
-
 
 self.addEventListener('sync', (event) => {
     if (event.tag === 'sync-bons') {
@@ -98,57 +76,93 @@ async function syncBons() {
         const store = transaction.objectStore('sync-queue');
         const request = store.getAll();
         request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error);
+        request.onerror = (e) => reject(e.target.error);
     });
-    
+
     if (!items || items.length === 0) {
+        console.log('Sync queue is empty.');
         return;
     }
+    
+    console.log(`Syncing ${items.length} item(s)...`);
 
     const token = await getAccessToken();
     if (!token) {
-        console.error('No access token available for sync. Sync will be retried later.');
-        return;
+        console.error('No access token for sync. Sync will be retried later.');
+        throw new Error('No auth token for sync.');
     }
-    
+
     for (const item of items) {
         try {
             const response = await fetch(`${SUPABASE_URL}/rest/v1/bons`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'apikey': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN4amZ0aWtqb3NrZGVha294aGdyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTk1MDA1OTgsImV4cCI6MjA3NTA3NjU5OH0.CS2iXOABcX4QPY472eXW8MkxoQJXDiC_WzKWPhFtISY',
+                    'apikey': SUPABASE_ANON_KEY,
                     'Authorization': `Bearer ${token}`,
                     'Prefer': 'return=representation'
                 },
                 body: JSON.stringify(item.data)
             });
-            
+
             if (response.ok) {
-                // Remove from queue
-                await new Promise((resolve, reject) => {
-                    const writeTx = db.transaction(['sync-queue'], 'readwrite');
-                    writeTx.oncomplete = resolve;
-                    writeTx.onerror = reject;
-                    const writeStore = writeTx.objectStore('sync-queue');
-                    writeStore.delete(item.id);
-                });
+                console.log(`Successfully synced bon: ${item.data.id}`);
+                await deleteFromQueue(db, item.id);
             } else {
-                console.error('Failed to sync bon:', await response.text());
+                console.error(`Failed to sync bon ${item.data.id}. Status: ${response.status}`);
+                const errorData = await response.json().catch(() => ({ message: 'Unknown error' }));
+                console.error('Error details:', errorData);
+
+                if (response.status === 401) {
+                    throw new Error('Auth token expired during sync.');
+                }
+                
+                if (response.status === 409) {
+                    console.warn(`Bon ${item.data.id} caused a conflict (duplicate). Removing from sync queue.`);
+                    await deleteFromQueue(db, item.id);
+                    notifyClient(item.data.id, 'duplicate');
+                } else if (response.status >= 400 && response.status < 500) {
+                    console.warn(`Bon ${item.data.id} failed with a client error (${response.status}). Removing from sync queue.`);
+                    await deleteFromQueue(db, item.id);
+                    notifyClient(item.data.id, 'client_error');
+                }
             }
         } catch (error) {
-            console.error('Error syncing bon:', error);
+            console.error('A network or critical error occurred during sync. Sync will be retried.', error);
+            throw error;
         }
     }
+    console.log('Sync processing finished.');
+}
+
+async function deleteFromQueue(db, id) {
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(['sync-queue'], 'readwrite');
+        tx.oncomplete = resolve;
+        tx.onerror = (e) => reject(e.target.error);
+        const store = tx.objectStore('sync-queue');
+        store.delete(id);
+    });
+}
+
+async function notifyClient(bonId, errorType) {
+    const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    if (!clients || clients.length === 0) return;
+
+    const message = errorType === 'duplicate'
+        ? `Le bon N° ${bonId} créé hors ligne existait déjà et n'a pas pu être synchronisé.`
+        : `Le bon N° ${bonId} créé hors ligne contient une erreur et n'a pas pu être synchronisé.`;
+
+    clients.forEach(client => {
+        client.postMessage({ type: 'SYNC_ERROR', payload: { message } });
+    });
 }
 
 async function openDB() {
     return new Promise((resolve, reject) => {
         const request = indexedDB.open('IMENDITrans', 1);
-        
         request.onerror = () => reject(request.error);
         request.onsuccess = () => resolve(request.result);
-        
         request.onupgradeneeded = (event) => {
             const db = event.target.result;
             if (!db.objectStoreNames.contains('sync-queue')) {
