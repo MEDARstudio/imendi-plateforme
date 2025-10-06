@@ -103,6 +103,13 @@ body {
     display: flex;
     min-height: 100vh;
 }
+
+/* Logo theming */
+.logo-light { display: block; }
+.logo-dark { display: none; }
+html[data-theme="dark"] .logo-light { display: none; }
+html[data-theme="dark"] .logo-dark { display: block; }
+
 #sidebar {
     width: 260px;
     background-color: var(--c-bg-secondary);
