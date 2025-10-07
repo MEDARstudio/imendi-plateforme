@@ -525,47 +525,65 @@ class IMENDITransApp {
         try {
             const username = await this.getUsernameFromProfile();
             document.getElementById('user-name').textContent = username || this.currentUser.email;
-
+    
             const token = localStorage.getItem('access_token');
             const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-            
-            const response = await fetch(`${SUPABASE_URL}/rest/v1/bons?user_id=eq.${this.currentUser.id}&created_at=gte.${thirtyDaysAgo}&order=created_at.desc`, {
+    
+            // Step 1: Fetch bons
+            const bonsResponse = await fetch(`${SUPABASE_URL}/rest/v1/bons?select=*&created_at=gte.${thirtyDaysAgo}&order=created_at.desc`, {
                 headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${token}` }
             });
-
-            if (response.ok) {
-                const bons = await response.json();
-                
-                const totalRevenue = bons.reduce((sum, bon) => sum + (bon.total || 0), 0);
-                document.getElementById('dashboard-bons-count').textContent = bons.length;
-                document.getElementById('dashboard-revenue').textContent = `${totalRevenue.toFixed(2)} €`;
-
-                const container = document.getElementById('recent-bons-list');
-                const emptyState = container.querySelector('.empty-state');
-                const recentBons = bons.slice(0, 3);
-                
-                container.querySelectorAll('.recent-bon-item').forEach(el => el.remove());
-
-                if (recentBons.length === 0) {
-                    emptyState.classList.remove('hidden');
-                } else {
-                    emptyState.classList.add('hidden');
-                    recentBons.forEach(bon => {
-                        const item = document.createElement('div');
-                        item.className = 'recent-bon-item';
-                        item.innerHTML = `
-                            <div>
-                                <strong>${bon.id}</strong>: ${bon.sender_first_name} à ${bon.recipient_first_name}<br>
-                                <small>${bon.origin} → ${bon.destination}</small>
-                            </div>
-                            <span class="status-badge ${bon.paid ? 'status-paid' : 'status-unpaid'}">${bon.paid ? 'Payé' : 'Non Payé'}</span>
-                        `;
-                        container.appendChild(item);
+            if (!bonsResponse.ok) {
+                const errorData = await bonsResponse.json();
+                throw new Error(errorData.message || "Failed to fetch dashboard bons");
+            }
+            const bons = await bonsResponse.json();
+    
+            // Step 2: Fetch profiles if there are bons
+            if (bons.length > 0) {
+                const userIds = [...new Set(bons.map(b => b.user_id).filter(id => id))];
+                if (userIds.length > 0) {
+                    const profilesResponse = await fetch(`${SUPABASE_URL}/rest/v1/profiles?select=id,username&id=in.(${userIds.join(',')})`, {
+                        headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${token}` }
                     });
+                    if (profilesResponse.ok) {
+                        const profiles = await profilesResponse.json();
+                        const profilesMap = new Map(profiles.map(p => [p.id, p.username]));
+                        // Step 3: Combine data
+                        bons.forEach(bon => {
+                            bon.profiles = { username: profilesMap.get(bon.user_id) || 'Inconnu' };
+                        });
+                    }
                 }
+            }
+    
+            // Step 4: Update UI
+            const totalRevenue = bons.reduce((sum, bon) => sum + (bon.total || 0), 0);
+            document.getElementById('dashboard-bons-count').textContent = bons.length;
+            document.getElementById('dashboard-revenue').textContent = `${totalRevenue.toFixed(2)} €`;
+    
+            const container = document.getElementById('recent-bons-list');
+            const emptyState = container.querySelector('.empty-state');
+            const recentBons = bons.slice(0, 3);
+    
+            container.querySelectorAll('.recent-bon-item').forEach(el => el.remove());
+    
+            if (recentBons.length === 0) {
+                emptyState.classList.remove('hidden');
             } else {
-                const errorData = await response.json();
-                throw new Error(errorData.message);
+                emptyState.classList.add('hidden');
+                recentBons.forEach(bon => {
+                    const item = document.createElement('div');
+                    item.className = 'recent-bon-item';
+                    item.innerHTML = `
+                        <div>
+                            <strong>${bon.id}</strong>: ${bon.sender_first_name} à ${bon.recipient_first_name}<br>
+                            <small>${bon.origin} → ${bon.destination} | Créé par: ${bon.profiles && bon.profiles.username ? bon.profiles.username : 'Inconnu'}</small>
+                        </div>
+                        <span class="status-badge ${bon.paid ? 'status-paid' : 'status-unpaid'}">${bon.paid ? 'Payé' : 'Non Payé'}</span>
+                    `;
+                    container.appendChild(item);
+                });
             }
         } catch (error) {
             this.showMessage(`Erreur chargement dashboard: ${error.message}`, 'error');
@@ -629,7 +647,7 @@ class IMENDITransApp {
                 const token = localStorage.getItem('access_token');
                 if (!token || !this.currentUser || !this.currentUser.id) throw new Error("AUTH_ERROR");
     
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/bons?user_id=eq.${this.currentUser.id}&select=id&order=id.desc&limit=1`, 
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/bons?select=id&order=id.desc&limit=1`, 
                     { headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${token}` } }
                 );
     
@@ -679,17 +697,43 @@ class IMENDITransApp {
         this.showLoader();
         try {
             const token = localStorage.getItem('access_token');
-            const response = await fetch(`${SUPABASE_URL}/rest/v1/bons?user_id=eq.${this.currentUser.id}&order=created_at.desc`, {
+    
+            // Step 1: Fetch bons
+            const bonsResponse = await fetch(`${SUPABASE_URL}/rest/v1/bons?select=*&order=created_at.desc`, {
                 headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${token}` }
             });
-            if (response.ok) {
-                const bons = await response.json();
-                this.displayHistory(bons);
-                document.getElementById('history-empty-state').classList.toggle('hidden', bons.length > 0);
-            } else { 
-                const errorData = await response.json();
+            if (!bonsResponse.ok) {
+                const errorData = await bonsResponse.json();
                 throw new Error(errorData.message || "Failed to fetch history");
             }
+            const bons = await bonsResponse.json();
+    
+            // Step 2: Fetch profiles
+            if (bons.length > 0) {
+                const userIds = [...new Set(bons.map(b => b.user_id).filter(id => id))];
+                if (userIds.length > 0) {
+                    const profilesResponse = await fetch(`${SUPABASE_URL}/rest/v1/profiles?select=id,username&id=in.(${userIds.join(',')})`, {
+                        headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${token}` }
+                    });
+                    if (profilesResponse.ok) {
+                        const profiles = await profilesResponse.json();
+                        const profilesMap = new Map(profiles.map(p => [p.id, p.username]));
+                        // Step 3: Combine data
+                        bons.forEach(bon => {
+                            bon.profiles = { username: profilesMap.get(bon.user_id) || 'Inconnu' };
+                        });
+                    } else {
+                        // Handle case where profiles can't be fetched, but don't crash.
+                        bons.forEach(bon => {
+                            bon.profiles = { username: 'Inconnu' };
+                        });
+                    }
+                }
+            }
+    
+            // Step 4: Update UI
+            this.displayHistory(bons);
+            document.getElementById('history-empty-state').classList.toggle('hidden', bons.length > 0);
         } catch (error) {
             this.showMessage(`Erreur chargement historique: ${error.message}`, 'error');
         } finally {
@@ -706,6 +750,7 @@ class IMENDITransApp {
                 <td>${bon.recipient_first_name} ${bon.recipient_last_name}</td>
                 <td>${bon.origin} → ${bon.destination}</td>
                 <td>${new Date(bon.created_at).toLocaleDateString()}</td>
+                <td>${bon.profiles && bon.profiles.username ? bon.profiles.username : 'Inconnu'}</td>
                 <td>${(bon.total || 0).toFixed(2)} €</td>
                 <td><span class="status-badge ${bon.paid ? 'status-paid' : 'status-unpaid'}">${bon.paid ? 'Payé' : 'Non Payé'}</span></td>
                 <td class="actions-cell">
@@ -736,8 +781,15 @@ class IMENDITransApp {
             const token = localStorage.getItem('access_token');
             const startDate = document.getElementById('start-date').value;
             const endDate = document.getElementById('end-date').value;
-            let url = `${SUPABASE_URL}/rest/v1/bons?user_id=eq.${this.currentUser.id}`;
-            if (startDate && endDate) url += `&created_at=gte.${startDate}T00:00:00&created_at=lte.${endDate}T23:59:59`;
+            let url = `${SUPABASE_URL}/rest/v1/bons`;
+            const queryParams = [];
+            if (startDate && endDate) {
+                queryParams.push(`created_at=gte.${startDate}T00:00:00`);
+                queryParams.push(`created_at=lte.${endDate}T23:59:59`);
+            }
+            if (queryParams.length > 0) {
+                url += `?${queryParams.join('&')}`;
+            }
 
             const response = await fetch(url, { headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${token}` }});
             if (response.ok) {
