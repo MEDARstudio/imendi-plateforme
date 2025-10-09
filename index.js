@@ -380,17 +380,24 @@ class IMENDITransApp {
 
     async saveBon() {
         this.showLoader();
-        const isEditing = !!document.getElementById('bon-form').dataset.editingId;
+        const form = document.getElementById('bon-form');
+        const isEditing = !!form.dataset.editingId;
         let formData = this.pendingBonData;
-
+    
         try {
             if (!formData || !formData.user_id) {
                 throw new Error("Session invalide ou données manquantes.");
             }
-
+    
             if (isEditing) {
+                const editingId = form.dataset.editingId;
+                if (!editingId) {
+                    throw new Error("ID d'édition manquant. Impossible de mettre à jour.");
+                }
+                // We use editingId for the query, and the rest of formData for the update payload.
+                // The 'id' from formData is destructured out and not used in the PATCH body.
                 const { id, ...updateData } = formData;
-                await this.updateSupabaseBon(id, updateData);
+                await this.updateSupabaseBon(editingId, updateData);
                 this.showMessage('Bon mis à jour avec succès !', 'success');
             } else {
                 if (this.offlineMode) {
